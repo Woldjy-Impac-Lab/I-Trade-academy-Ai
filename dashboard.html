@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableau de bord — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li id="user-name"></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container dash-layout">
+  <nav class="dash-nav">
+    <a href="dashboard.html" class="active">Mes cours</a>
+    <a href="#" title="Débloqué après le niveau Intermédiaire">Simulateur</a>
+    <a href="#" title="Bientôt disponible">Atlas — Coach IA</a>
+    <a href="#" title="Bientôt disponible">Journal de trading</a>
+    <a href="#" title="Bientôt disponible">Communauté</a>
+    <a href="#" title="Bientôt disponible">Certificats</a>
+  </nav>
+
+  <main>
+    <h2>Ma progression</h2>
+    <p id="level-summary">Chargement...</p>
+    <div id="courses-container"></div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.querySelector("main").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé. ' +
+    'Vérifie qu\'il existe bien au chemin "js/supabase-client.js" à côté de dashboard.html, ' +
+    'et regarde l\'onglet Réseau des outils de développement pour voir le code d\'erreur (404, etc.).' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script dashboard.");
+}
+
+(async () => {
+  const user = await requireAuth();
+  if (!user) return;
+
+  const profile = await getCurrentProfile();
+  document.getElementById("user-name").textContent = profile?.full_name || user.email;
+
+  const [levels, access, completedIds] = await Promise.all([
+    getLevelsWithCourses(),
+    getUserLevelAccess(user.id),
+    getUserCompletedLessonIds(user.id)
+  ]);
+
+  const currentLevelName = levels.find(l => l.id === profile?.current_level)?.name || "Débutant";
+  document.getElementById("level-summary").textContent =
+    `Niveau actuel : ${currentLevelName}. Niveaux débloqués : ${access.length} sur ${levels.length}.`;
+
+  const container = document.getElementById("courses-container");
+
+  if (levels.length === 0) {
+    container.innerHTML = `<p>Le contenu académique n'a pas encore été chargé dans Supabase. Un administrateur doit ajouter les cours, modules et leçons (voir <code>supabase/schema.sql</code> et le tableau de bord admin).</p>`;
+    return;
+  }
+
+  levels.forEach(level => {
+    const unlocked = access.includes(level.id);
+    const section = document.createElement("section");
+    section.style.marginBottom = "36px";
+
+    const heading = document.createElement("h3");
+    heading.textContent = `${level.name} ${unlocked ? "" : "🔒 (" + level.price_usd + " $)"}`;
+    section.appendChild(heading);
+
+    level.courses.forEach(course => {
+      const totalLessons = course.modules.reduce((sum, m) => sum + m.lessons.length, 0);
+      const doneLessons = course.modules.reduce(
+        (sum, m) => sum + m.lessons.filter(l => completedIds.has(l.id)).length, 0
+      );
+      const pct = totalLessons ? Math.round((doneLessons / totalLessons) * 100) : 0;
+
+      const block = document.createElement("div");
+      block.className = "course-block";
+      block.innerHTML = `
+        <h4 style="margin:0 0 4px;">${course.title}</h4>
+        <div class="progress-bar"><span style="width:${pct}%"></span></div>
+        <p style="margin:0; font-size:0.85rem; color:var(--ink-soft);">${doneLessons} / ${totalLessons} leçons — ${pct}%</p>
+        ${course.modules.map(m => `
+          <div class="module-row">
+            <span>${m.title}</span>
+            <span class="badge">${m.lessons.length} leçons</span>
+          </div>
+        `).join("")}
+        ${unlocked
+          ? `<div style="margin-top:12px;"><a href="#" class="btn btn-outline">Continuer</a></div>`
+          : `<div style="margin-top:12px;"><a href="checkout.html?level=${level.id}" class="btn btn-primary">Débloquer ce niveau</a></div>`}
+      `;
+      section.appendChild(block);
+    });
+
+    container.appendChild(section);
+  });
+})();
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>

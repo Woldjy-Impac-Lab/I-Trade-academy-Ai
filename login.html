@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connexion — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="index.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="signup.html">Créer un compte</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="auth-shell">
+  <div class="auth-card">
+    <h2>Connexion</h2>
+    <div id="form-msg" class="form-msg"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" required autocomplete="email">
+      </div>
+      <div class="field">
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Se connecter</button>
+    </form>
+    <p class="auth-switch">
+      <a href="#" id="reset-link">Mot de passe oublié ?</a>
+    </p>
+    <p class="auth-switch">Pas encore de compte ? <a href="signup.html">Inscris-toi</a></p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+const form = document.getElementById("login-form");
+const msg = document.getElementById("form-msg");
+
+function showMsg(text, type) {
+  msg.textContent = text;
+  msg.className = "form-msg " + type;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+
+  const submitBtn = form.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Connexion...";
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Se connecter";
+
+  if (error) {
+    showMsg("Email ou mot de passe incorrect.", "error");
+    return;
+  }
+  window.location.href = "dashboard.html";
+});
+
+document.getElementById("reset-link").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value.trim();
+  if (!email) {
+    showMsg("Entre d'abord ton email ci-dessus, puis clique à nouveau.", "error");
+    return;
+  }
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + "/reset-password.html"
+  });
+  if (error) {
+    showMsg("Impossible d'envoyer l'email de réinitialisation.", "error");
+  } else {
+    showMsg("Email de réinitialisation envoyé si ce compte existe.", "success");
+  }
+});
+
+// Redirige si déjà connecté
+(async () => {
+  const user = await getCurrentUser();
+  if (user) window.location.href = "dashboard.html";
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Créer un compte — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="index.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="login.html">Connexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="auth-shell">
+  <div class="auth-card">
+    <h2>Créer un compte</h2>
+    <div id="form-msg" class="form-msg"></div>
+    <form id="signup-form">
+      <div class="field">
+        <label for="full_name">Nom complet</label>
+        <input type="text" id="full_name" required autocomplete="name">
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" required autocomplete="email">
+      </div>
+      <div class="field">
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" required minlength="8" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label for="password2">Confirmer le mot de passe</label>
+        <input type="password" id="password2" required minlength="8" autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Créer mon compte gratuit</button>
+    </form>
+    <p class="auth-switch">Déjà inscrit ? <a href="login.html">Connecte-toi</a></p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+const form = document.getElementById("signup-form");
+const msg = document.getElementById("form-msg");
+
+function showMsg(text, type) {
+  msg.textContent = text;
+  msg.className = "form-msg " + type;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const full_name = document.getElementById("full_name").value.trim();
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  const password2 = document.getElementById("password2").value;
+
+  if (password !== password2) {
+    showMsg("Les mots de passe ne correspondent pas.", "error");
+    return;
+  }
+  if (password.length < 8) {
+    showMsg("Le mot de passe doit contenir au moins 8 caractères.", "error");
+    return;
+  }
+
+  const submitBtn = form.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Création en cours...";
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { full_name } }
+  });
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Créer mon compte gratuit";
+
+  if (error) {
+    showMsg(error.message.includes("already registered")
+      ? "Un compte existe déjà avec cet email."
+      : "Erreur lors de la création du compte.", "error");
+    return;
+  }
+
+  if (data.session) {
+    // Confirmation par email désactivée dans le projet Supabase : session immédiate
+    window.location.href = "dashboard.html";
+  } else {
+    showMsg("Compte créé. Vérifie ta boîte mail pour confirmer ton adresse avant de te connecter.", "success");
+    form.reset();
+  }
+});
+
+(async () => {
+  const user = await getCurrentUser();
+  if (user) window.location.href = "dashboard.html";
+})();
+</script>
+
+</body>
+</html>
