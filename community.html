@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Communauté — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="padding-top:32px; padding-bottom:80px; max-width:760px;">
+  <h1 style="margin-bottom:4px;">Communauté</h1>
+  <p>Pose une question, partage une stratégie, ou aide un autre trader. Les échanges sont organisés par sujet et modérés.</p>
+
+  <div id="community-shell">
+    <p>Chargement...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("community-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script community.");
+}
+
+let currentUser = null;
+let currentProfile = null;
+let categories = [];
+let activeCategoryId = null;
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function timeAgo(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "à l'instant";
+  if (mins < 60) return `il y a ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `il y a ${days} j`;
+}
+
+(async () => {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+  currentProfile = await getCurrentProfile();
+
+  categories = await getCommunityCategories();
+
+  const shell = document.getElementById("community-shell");
+  shell.innerHTML = `
+    <div class="admin-tabs" id="category-tabs">
+      <button class="admin-tab active" data-cat="">Tous les sujets</button>
+      ${categories.map(c => `<button class="admin-tab" data-cat="${c.id}">${escapeHtml(c.name)}</button>`).join("")}
+    </div>
+
+    <button class="btn btn-primary" id="toggle-new-post">+ Nouveau sujet</button>
+
+    <div class="new-post-form" id="new-post-form">
+      <div class="field">
+        <label for="post-category">Catégorie</label>
+        <select class="admin-inline-field" id="post-category">
+          ${categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label for="post-title">Titre</label>
+        <input class="admin-inline-field" id="post-title" maxlength="200">
+      </div>
+      <div class="field">
+        <label for="post-content">Message</label>
+        <textarea class="admin-inline-field" id="post-content" style="min-height:100px;"></textarea>
+      </div>
+      <div id="new-post-msg" class="form-msg"></div>
+      <button class="btn btn-primary" id="submit-post">Publier</button>
+    </div>
+
+    <div id="posts-list" style="margin-top:24px;"><p>Chargement des sujets...</p></div>
+  `;
+
+  document.querySelectorAll("#category-tabs .admin-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll("#category-tabs .admin-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      activeCategoryId = tab.getAttribute("data-cat") || null;
+      loadPosts();
+    });
+  });
+
+  document.getElementById("toggle-new-post").addEventListener("click", () => {
+    document.getElementById("new-post-form").classList.toggle("open");
+  });
+
+  document.getElementById("submit-post").addEventListener("click", async () => {
+    const categoryId = document.getElementById("post-category").value;
+    const title = document.getElementById("post-title").value.trim();
+    const content = document.getElementById("post-content").value.trim();
+    const msg = document.getElementById("new-post-msg");
+
+    if (!title || !content) {
+      msg.textContent = "Le titre et le message sont obligatoires.";
+      msg.className = "form-msg error";
+      return;
+    }
+
+    const btn = document.getElementById("submit-post");
+    btn.disabled = true;
+    btn.textContent = "Publication...";
+    const created = await createCommunityPost(currentUser.id, categoryId, title, content);
+    btn.disabled = false;
+    btn.textContent = "Publier";
+
+    if (created) {
+      window.location.href = `community-post.html?id=${created.id}`;
+    } else {
+      msg.textContent = "Une erreur est survenue lors de la publication.";
+      msg.className = "form-msg error";
+    }
+  });
+
+  await loadPosts();
+})();
+
+async function loadPosts() {
+  const listEl = document.getElementById("posts-list");
+  listEl.innerHTML = "<p>Chargement des sujets...</p>";
+  const posts = await getCommunityPosts(activeCategoryId);
+
+  if (posts.length === 0) {
+    listEl.innerHTML = `<p>Aucun sujet dans cette catégorie pour le moment. Sois le premier à en lancer un !</p>`;
+    return;
+  }
+
+  const categoryNames = {};
+  categories.forEach(c => categoryNames[c.id] = c.name);
+
+  listEl.innerHTML = posts.map(p => {
+    const commentCount = p.community_comments?.[0]?.count || 0;
+    const author = p.profiles?.full_name || p.profiles?.email || "Utilisateur";
+    const isHidden = p.is_hidden;
+    return `
+      <a href="community-post.html?id=${p.id}" class="post-card ${isHidden ? "hidden-post" : ""}">
+        <span class="category-pill">${escapeHtml(categoryNames[p.category_id] || p.category_id)}</span>
+        ${isHidden ? '<span class="category-pill" style="background:var(--danger); color:#fff;">Masqué</span>' : ""}
+        <h3>${escapeHtml(p.title)}</h3>
+        <div class="post-meta">
+          <span>${escapeHtml(author)}</span>
+          <span>${timeAgo(p.created_at)}</span>
+          <span>${commentCount} réponse${commentCount !== 1 ? "s" : ""}</span>
+        </div>
+      </a>
+    `;
+  }).join("");
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
