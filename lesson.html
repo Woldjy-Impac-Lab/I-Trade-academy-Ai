@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leçon — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="lesson-shell" id="lesson-shell">
+  <p>Chargement de la leçon...</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("lesson-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé. ' +
+    'Vérifie qu\'il existe bien au chemin "js/supabase-client.js" à côté de lesson.html.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script lesson.");
+}
+
+function getLessonIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("id");
+}
+
+function renderLocked(shell, level) {
+  shell.innerHTML = `
+    <div class="lesson-locked">
+      <h2>Niveau verrouillé</h2>
+      <p>Cette leçon fait partie du niveau ${level.name}, qui nécessite un accès payant (${level.price_usd} $).</p>
+      <a href="checkout.html?level=${level.id}" class="btn btn-primary">Débloquer le niveau ${level.name}</a>
+      <p style="margin-top:18px;"><a href="dashboard.html">← Retour au tableau de bord</a></p>
+    </div>
+  `;
+}
+
+(async () => {
+  const user = await requireAuth();
+  if (!user) return;
+
+  const shell = document.getElementById("lesson-shell");
+  const lessonId = getLessonIdFromUrl();
+
+  if (!lessonId) {
+    shell.innerHTML = `<p>Aucune leçon spécifiée. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
+    return;
+  }
+
+  const lesson = await getLessonWithContext(lessonId);
+  if (!lesson) {
+    shell.innerHTML = `<p>Cette leçon est introuvable. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
+    return;
+  }
+
+  const mod = lesson.modules;
+  const course = mod.courses;
+  const level = course.levels;
+
+  // Vérifie l'accès au niveau (le niveau Débutant est toujours ouvert)
+  if (level.id !== "debutant") {
+    const access = await getUserLevelAccess(user.id);
+    if (!access.includes(level.id)) {
+      renderLocked(shell, level);
+      return;
+    }
+  }
+
+  const [siblingLessons, alreadyDone] = await Promise.all([
+    getModuleLessons(mod.id),
+    isLessonCompleted(user.id, lesson.id)
+  ]);
+
+  const currentIndex = siblingLessons.findIndex(l => l.id === lesson.id);
+  const prevLesson = currentIndex > 0 ? siblingLessons[currentIndex - 1] : null;
+  const nextLesson = currentIndex < siblingLessons.length - 1 ? siblingLessons[currentIndex + 1] : null;
+
+  function render(isDone) {
+    shell.innerHTML = `
+      <div class="breadcrumb">
+        <a href="dashboard.html">${level.name}</a> ›
+        ${course.title} ›
+        ${mod.title}
+      </div>
+      <div class="lesson-meta">Leçon ${lesson.order_index} / ${siblingLessons.length}</div>
+      <h1>${lesson.title}</h1>
+      <div class="lesson-body">${lesson.content || "Le contenu de cette leçon sera bientôt disponible."}</div>
+
+      <div class="lesson-status">
+        <span class="badge ${isDone ? "done" : ""}">${isDone ? "✓ Terminée" : "Non terminée"}</span>
+        ${!isDone ? `<button class="btn btn-primary" id="complete-btn">Marquer comme terminée</button>` : ""}
+      </div>
+
+      <div class="lesson-nav-buttons">
+        ${prevLesson
+          ? `<a href="lesson.html?id=${prevLesson.id}" class="btn btn-outline">← Leçon précédente</a>`
+          : `<span></span>`}
+        ${nextLesson
+          ? `<a href="lesson.html?id=${nextLesson.id}" class="btn btn-primary">Leçon suivante →</a>`
+          : `<a href="dashboard.html" class="btn btn-primary">Terminer le module → Tableau de bord</a>`}
+      </div>
+    `;
+
+    const completeBtn = document.getElementById("complete-btn");
+    if (completeBtn) {
+      completeBtn.addEventListener("click", async () => {
+        completeBtn.disabled = true;
+        completeBtn.textContent = "Enregistrement...";
+        const ok = await markLessonComplete(user.id, lesson.id);
+        if (ok) {
+          render(true);
+        } else {
+          completeBtn.disabled = false;
+          completeBtn.textContent = "Marquer comme terminée";
+        }
+      });
+    }
+  }
+
+  render(alreadyDone);
+})();
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>

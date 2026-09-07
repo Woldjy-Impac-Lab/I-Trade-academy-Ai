@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quiz — I Trade Academy AI</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="lesson-shell" id="quiz-shell">
+  <p>Chargement du quiz...</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("quiz-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script quiz.");
+}
+
+function getCourseIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("course");
+}
+
+(async () => {
+  const user = await requireAuth();
+  if (!user) return;
+
+  const shell = document.getElementById("quiz-shell");
+  const courseId = getCourseIdFromUrl();
+
+  if (!courseId) {
+    shell.innerHTML = `<p>Aucun cours spécifié. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
+    return;
+  }
+
+  const course = await getCourseQuizContext(courseId);
+  if (!course) {
+    shell.innerHTML = `<p>Ce cours est introuvable. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
+    return;
+  }
+  const level = course.levels;
+
+  // Accès au niveau
+  if (level.id !== "debutant") {
+    const access = await getUserLevelAccess(user.id);
+    if (!access.includes(level.id)) {
+      shell.innerHTML = `
+        <div class="lesson-locked">
+          <h2>Niveau verrouillé</h2>
+          <p>Le quiz du cours "${course.title}" fait partie du niveau ${level.name} (${level.price_usd} $).</p>
+          <a href="checkout.html?level=${level.id}" class="btn btn-primary">Débloquer le niveau ${level.name}</a>
+          <p style="margin-top:18px;"><a href="dashboard.html">← Retour au tableau de bord</a></p>
+        </div>`;
+      return;
+    }
+  }
+
+  // Toutes les leçons du cours doivent être terminées avant le quiz
+  const completion = await getCourseLessonCompletion(user.id, courseId);
+  if (completion.total > 0 && completion.done < completion.total) {
+    shell.innerHTML = `
+      <div class="lesson-locked">
+        <h2>Termine d'abord les leçons</h2>
+        <p>Tu as terminé ${completion.done} / ${completion.total} leçons du cours "${course.title}". Le quiz se débloque une fois toutes les leçons terminées.</p>
+        <a href="dashboard.html" class="btn btn-primary">← Retour au tableau de bord</a>
+      </div>`;
+    return;
+  }
+
+  const questions = await getQuizQuestions(courseId);
+  if (questions.length === 0) {
+    shell.innerHTML = `
+      <div class="breadcrumb"><a href="dashboard.html">${level.name}</a> › ${course.title}</div>
+      <h1>Quiz — ${course.title}</h1>
+      <p>Les questions de ce quiz n'ont pas encore été ajoutées par l'équipe pédagogique. Reviens un peu plus tard.</p>
+      <a href="dashboard.html" class="btn btn-outline">← Retour au tableau de bord</a>
+    `;
+    return;
+  }
+
+  function renderForm() {
+    shell.innerHTML = `
+      <div class="breadcrumb"><a href="dashboard.html">${level.name}</a> › ${course.title}</div>
+      <h1>Quiz — ${course.title}</h1>
+      <div class="quiz-intro">
+        <strong>${questions.length} questions</strong> — 75% de bonnes réponses minimum pour valider ce cours.
+        Une seule réponse par question ; le score est calculé à la soumission.
+      </div>
+      <form id="quiz-form">
+        ${questions.map((q, i) => `
+          <div class="quiz-question" data-question-id="${q.id}">
+            <div class="quiz-question-title">${i + 1}. ${q.question}</div>
+            ${q.choices.map(c => `
+              <label class="quiz-choice" data-choice-id="${c.id}">
+                <input type="radio" name="q_${q.id}" value="${c.id}" required>
+                <span>${c.text}</span>
+              </label>
+            `).join("")}
+          </div>
+        `).join("")}
+        <div class="quiz-submit-bar">
+          <button type="submit" class="btn btn-primary btn-block">Soumettre mes réponses</button>
+        </div>
+      </form>
+    `;
+
+    document.getElementById("quiz-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const submitBtn = e.target.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Correction en cours...";
+
+      const userAnswers = {};
+      questions.forEach(q => {
+        const checked = document.querySelector(`input[name="q_${q.id}"]:checked`);
+        userAnswers[q.id] = checked ? checked.value : null;
+      });
+
+      const result = await submitQuizAttempt(user.id, courseId, questions, userAnswers);
+
+      let certResult = { issued: false, eligible: false };
+      if (result.passed) {
+        certResult = await issueCertificateIfEligible(user.id, level.id);
+      }
+
+      renderResult(result, certResult, userAnswers);
+    });
+  }
+
+  function renderResult(result, certResult, userAnswers) {
+    // Corrige visuellement chaque question
+    questions.forEach(q => {
+      const block = document.querySelector(`.quiz-question[data-question-id="${q.id}"]`);
+      if (!block) return;
+      block.querySelectorAll(".quiz-choice").forEach(choiceEl => {
+        const choiceId = choiceEl.getAttribute("data-choice-id");
+        choiceEl.querySelector("input").disabled = true;
+        if (choiceId === q.correct_choice_id) {
+          choiceEl.classList.add("correct");
+        } else if (choiceId === userAnswers[q.id]) {
+          choiceEl.classList.add("incorrect");
+        }
+      });
+    });
+
+    const submitBar = document.querySelector(".quiz-submit-bar");
+
+    let certMsg = "";
+    if (certResult.issued) {
+      certMsg = `<p style="margin-top:10px;">🎓 Félicitations, tu as validé l'ensemble du niveau <strong>${level.name}</strong> — ton certificat vient d'être généré !</p>`;
+    } else if (certResult.eligible && certResult.certificate) {
+      certMsg = `<p style="margin-top:10px;">🎓 Le niveau ${level.name} est validé — ton certificat est déjà disponible.</p>`;
+    } else if (result.passed) {
+      certMsg = `<p style="margin-top:10px;">Cours validé. Termine l'autre cours de ce niveau (leçons + quiz) pour obtenir ton certificat de niveau ${level.name}.</p>`;
+    }
+
+    const banner = document.createElement("div");
+    banner.className = "quiz-score-banner " + (result.passed ? "pass" : "fail");
+    banner.innerHTML = `
+      <div>${result.passed ? "✅ Quiz réussi" : "❌ Quiz non validé"}</div>
+      <div class="score-number">${result.scorePercent}%</div>
+      <div>${result.correctCount} / ${result.total} bonnes réponses (minimum requis : 75%)</div>
+      ${certMsg}
+      ${!result.passed ? `<button class="btn btn-primary" id="retry-btn" style="margin-top:14px;">Repasser le quiz</button>` : `<a href="dashboard.html" class="btn btn-primary" style="margin-top:14px;">Retour au tableau de bord</a>`}
+    `;
+    submitBar.replaceWith(banner);
+
+    const retryBtn = document.getElementById("retry-btn");
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => window.location.reload());
+    }
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  renderForm();
+})();
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>

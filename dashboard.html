@@ -88,6 +88,18 @@ if (typeof requireAuth !== "function") {
       );
       const pct = totalLessons ? Math.round((doneLessons / totalLessons) * 100) : 0;
 
+      // Première leçon non terminée du cours, pour le bouton "Continuer"
+      let firstIncompleteLesson = null;
+      for (const m of course.modules) {
+        for (const l of m.lessons) {
+          if (!completedIds.has(l.id)) { firstIncompleteLesson = l; break; }
+        }
+        if (firstIncompleteLesson) break;
+      }
+      const continueLessonId = firstIncompleteLesson
+        ? firstIncompleteLesson.id
+        : (course.modules[0]?.lessons[0]?.id || null);
+
       const block = document.createElement("div");
       block.className = "course-block";
       block.innerHTML = `
@@ -95,14 +107,34 @@ if (typeof requireAuth !== "function") {
         <div class="progress-bar"><span style="width:${pct}%"></span></div>
         <p style="margin:0; font-size:0.85rem; color:var(--ink-soft);">${doneLessons} / ${totalLessons} leçons — ${pct}%</p>
         ${course.modules.map(m => `
-          <div class="module-row">
-            <span>${m.title}</span>
-            <span class="badge">${m.lessons.length} leçons</span>
+          <div class="module-row" style="display:block;">
+            <div style="display:flex; justify-content:space-between; font-weight:600; margin-bottom:6px;">
+              <span>${m.title}</span>
+              <span class="badge">${m.lessons.length} leçons</span>
+            </div>
+            <ul style="list-style:none; margin:0 0 10px; padding:0;">
+              ${m.lessons.map(l => {
+                const done = completedIds.has(l.id);
+                if (!unlocked) {
+                  return `<li style="padding:4px 0; color:var(--ink-soft); font-size:0.9rem;">🔒 ${l.title}</li>`;
+                }
+                return `<li style="padding:4px 0; font-size:0.9rem;">
+                  <a href="lesson.html?id=${l.id}" style="text-decoration:none; color:${done ? "var(--forest-dark)" : "var(--ink)"};">
+                    ${done ? "✓" : "○"} ${l.title}
+                  </a>
+                </li>`;
+              }).join("")}
+            </ul>
           </div>
         `).join("")}
         ${unlocked
-          ? `<div style="margin-top:12px;"><a href="#" class="btn btn-outline">Continuer</a></div>`
-          : `<div style="margin-top:12px;"><a href="checkout.html?level=${level.id}" class="btn btn-primary">Débloquer ce niveau</a></div>`}
+          ? `<div style="margin-top:4px; display:flex; gap:10px; flex-wrap:wrap;">
+              <a href="lesson.html?id=${continueLessonId}" class="btn btn-outline">${doneLessons > 0 ? "Continuer" : "Commencer"}</a>
+              ${doneLessons === totalLessons && totalLessons > 0
+                ? `<a href="quiz.html?course=${course.id}" class="btn btn-primary">Passer le quiz</a>`
+                : `<span class="badge" style="align-self:center;">Quiz débloqué après les ${totalLessons} leçons</span>`}
+            </div>`
+          : `<div style="margin-top:4px;"><a href="checkout.html?level=${level.id}" class="btn btn-primary">Débloquer ce niveau</a></div>`}
       `;
       section.appendChild(block);
     });
