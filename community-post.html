@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sujet — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="community.html">← Communauté</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="lesson-shell" id="post-shell" style="max-width:720px;">
+  <p>Chargement du sujet...</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("post-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script community-post.");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function formatDateTime(iso) {
+  return new Date(iso).toLocaleString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function getPostIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("id");
+}
+
+let currentUser = null;
+let isAdmin = false;
+let postId = null;
+
+(async () => {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+
+  const profile = await getCurrentProfile();
+  isAdmin = profile?.role === "admin";
+
+  postId = getPostIdFromUrl();
+  const shell = document.getElementById("post-shell");
+
+  if (!postId) {
+    shell.innerHTML = `<p>Aucun sujet spécifié. <a href="community.html">Retourner à la communauté</a>.</p>`;
+    return;
+  }
+
+  await renderPost();
+})();
+
+async function renderPost() {
+  const shell = document.getElementById("post-shell");
+  const post = await getCommunityPostDetail(postId);
+
+  if (!post) {
+    shell.innerHTML = `<p>Ce sujet est introuvable ou n'est plus disponible. <a href="community.html">Retourner à la communauté</a>.</p>`;
+    return;
+  }
+
+  const isOwner = post.user_id === currentUser.id;
+  const canModerate = isOwner || isAdmin;
+  const author = post.profiles?.full_name || post.profiles?.email || "Utilisateur";
+
+  const comments = await getCommunityComments(postId);
+
+  shell.innerHTML = `
+    <div class="breadcrumb"><a href="community.html">Communauté</a> › ${escapeHtml(post.community_categories?.name || "")}</div>
+    <span class="category-pill">${escapeHtml(post.community_categories?.name || "")}</span>
+    ${post.is_hidden ? '<span class="category-pill" style="background:var(--danger); color:#fff;">Masqué</span>' : ""}
+    <h1>${escapeHtml(post.title)}</h1>
+    <div class="post-meta" style="margin-bottom:18px;">
+      <span>${escapeHtml(author)}</span>
+      <span>${formatDateTime(post.created_at)}</span>
+    </div>
+    <div class="lesson-body">${escapeHtml(post.content)}</div>
+
+    ${canModerate ? `
+      <div class="admin-actions" style="margin-bottom:28px;">
+        <button class="btn btn-outline" id="toggle-post-hidden">${post.is_hidden ? "Réafficher le sujet" : "Masquer le sujet"}</button>
+        ${isOwner ? `<button class="btn btn-outline" id="delete-post">Supprimer le sujet</button>` : ""}
+      </div>
+    ` : ""}
+
+    <h3>${comments.length} réponse${comments.length !== 1 ? "s" : ""}</h3>
+    <div id="comments-list">
+      ${comments.map(c => renderComment(c)).join("") || "<p>Aucune réponse pour le moment. Sois le premier à répondre.</p>"}
+    </div>
+
+    <div class="field" style="margin-top:24px;">
+      <label for="comment-content">Ta réponse</label>
+      <textarea class="admin-inline-field" id="comment-content" style="min-height:80px;"></textarea>
+    </div>
+    <div id="comment-msg" class="form-msg"></div>
+    <button class="btn btn-primary" id="submit-comment">Répondre</button>
+  `;
+
+  const toggleBtn = document.getElementById("toggle-post-hidden");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", async () => {
+      toggleBtn.disabled = true;
+      const ok = await setCommunityPostHidden(postId, !post.is_hidden);
+      if (ok) {
+        if (isAdmin) await logAdminActionSafe("toggle_post_hidden", "community_posts", postId, { hidden: !post.is_hidden });
+        renderPost();
+      } else {
+        alert("Erreur lors de la modération du sujet.");
+        toggleBtn.disabled = false;
+      }
+    });
+  }
+
+  const deleteBtn = document.getElementById("delete-post");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", async () => {
+      if (!confirm("Supprimer définitivement ce sujet et toutes ses réponses ?")) return;
+      const ok = await deleteCommunityPost(postId);
+      if (ok) {
+        window.location.href = "community.html";
+      } else {
+        alert("Erreur lors de la suppression.");
+      }
+    });
+  }
+
+  document.getElementById("submit-comment").addEventListener("click", async () => {
+    const content = document.getElementById("comment-content").value.trim();
+    const msg = document.getElementById("comment-msg");
+    if (!content) {
+      msg.textContent = "Le message ne peut pas être vide.";
+      msg.className = "form-msg error";
+      return;
+    }
+    const btn = document.getElementById("submit-comment");
+    btn.disabled = true;
+    btn.textContent = "Envoi...";
+    const created = await createCommunityComment(currentUser.id, postId, content);
+    btn.disabled = false;
+    btn.textContent = "Répondre";
+    if (created) {
+      renderPost();
+    } else {
+      msg.textContent = "Erreur lors de l'envoi de la réponse.";
+      msg.className = "form-msg error";
+    }
+  });
+
+  wireCommentModeration();
+}
+
+function renderComment(c) {
+  const author = c.profiles?.full_name || c.profiles?.email || "Utilisateur";
+  const isOwner = c.user_id === currentUser.id;
+  const canModerate = isOwner || isAdmin;
+  return `
+    <div class="comment-card ${c.is_hidden ? "hidden-comment" : ""}" data-comment-id="${c.id}">
+      <div class="comment-meta">
+        ${escapeHtml(author)} — ${formatDateTime(c.created_at)}
+        ${c.is_hidden ? ' — <strong style="color:var(--danger);">masqué</strong>' : ""}
+      </div>
+      <div>${escapeHtml(c.content)}</div>
+      ${canModerate ? `
+        <div class="admin-actions">
+          <button class="btn btn-outline btn-toggle-comment" data-hidden="${c.is_hidden}">${c.is_hidden ? "Réafficher" : "Masquer"}</button>
+          ${isOwner ? `<button class="btn btn-outline btn-delete-comment">Supprimer</button>` : ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function wireCommentModeration() {
+  document.querySelectorAll(".btn-toggle-comment").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const card = e.target.closest(".comment-card");
+      const commentId = card.getAttribute("data-comment-id");
+      const currentlyHidden = btn.getAttribute("data-hidden") === "true";
+      btn.disabled = true;
+      const ok = await setCommunityCommentHidden(commentId, !currentlyHidden);
+      if (ok) {
+        if (isAdmin) await logAdminActionSafe("toggle_comment_hidden", "community_comments", commentId, { hidden: !currentlyHidden });
+        renderPost();
+      } else {
+        alert("Erreur lors de la modération du commentaire.");
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll(".btn-delete-comment").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const card = e.target.closest(".comment-card");
+      const commentId = card.getAttribute("data-comment-id");
+      if (!confirm("Supprimer définitivement cette réponse ?")) return;
+      const ok = await deleteCommunityComment(commentId);
+      if (ok) renderPost();
+      else alert("Erreur lors de la suppression.");
+    });
+  });
+}
+
+// Best-effort : n'interrompt jamais l'action de modération si l'audit échoue.
+async function logAdminActionSafe(action, table, targetId, details) {
+  try {
+    await logAdminAction(currentUser.id, action, table, targetId, details);
+  } catch (err) {
+    console.error("Audit non enregistré :", err);
+  }
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
