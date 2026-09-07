@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Administration — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="padding-top:32px; padding-bottom:80px;">
+  <h1 style="margin-bottom:4px;">Administration</h1>
+  <p style="margin-bottom:0;">Gestion de la plateforme I Trade Academy AI.</p>
+
+  <div id="admin-shell">
+    <p>Vérification des droits d'accès...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("admin-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script admin.");
+}
+
+let currentAdmin = null;
+const loadedTabs = {};
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("fr-FR", { year: "numeric", month: "short", day: "numeric" });
+}
+
+(async () => {
+  const user = await requireAuth();
+  if (!user) return;
+
+  const profile = await getCurrentProfile();
+  const shell = document.getElementById("admin-shell");
+
+  if (!profile || profile.role !== "admin") {
+    shell.innerHTML = `
+      <div class="lesson-locked">
+        <h2>Accès refusé</h2>
+        <p>Cette section est réservée aux comptes administrateur.</p>
+        <a href="dashboard.html" class="btn btn-primary">← Retour au tableau de bord</a>
+      </div>`;
+    return;
+  }
+
+  currentAdmin = user;
+
+  shell.innerHTML = `
+    <div class="admin-tabs">
+      <button class="admin-tab active" data-tab="overview">Vue d'ensemble</button>
+      <button class="admin-tab" data-tab="users">Utilisateurs</button>
+      <button class="admin-tab" data-tab="content">Contenu académique</button>
+      <button class="admin-tab" data-tab="payments">Paiements</button>
+      <button class="admin-tab" data-tab="certificates">Certificats</button>
+      <button class="admin-tab" data-tab="audit">Journal d'audit</button>
+    </div>
+    <div class="admin-panel active" id="panel-overview"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-users"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-content"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-payments"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-certificates"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-audit"><p>Chargement...</p></div>
+  `;
+
+  document.querySelectorAll(".admin-tab").forEach(tab => {
+    tab.addEventListener("click", () => switchTab(tab.getAttribute("data-tab")));
+  });
+
+  await loadOverview();
+  loadedTabs.overview = true;
+})();
+
+function switchTab(tabName) {
+  document.querySelectorAll(".admin-tab").forEach(t => t.classList.toggle("active", t.getAttribute("data-tab") === tabName));
+  document.querySelectorAll(".admin-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + tabName));
+
+  if (!loadedTabs[tabName]) {
+    loadedTabs[tabName] = true;
+    if (tabName === "users") loadUsers();
+    if (tabName === "content") loadContent();
+    if (tabName === "payments") loadPayments();
+    if (tabName === "certificates") loadCertificates();
+    if (tabName === "audit") loadAudit();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Vue d'ensemble
+// ---------------------------------------------------------------------------
+async function loadOverview() {
+  const panel = document.getElementById("panel-overview");
+  const stats = await getPlatformStats();
+
+  const levelNames = { debutant: "Débutant", intermediaire: "Intermédiaire", professionnel: "Professionnel", expert: "Expert" };
+  const levelBreakdown = Object.entries(stats.levelCounts)
+    .map(([lvl, count]) => `<li>${levelNames[lvl] || lvl} : ${count}</li>`)
+    .join("");
+
+  panel.innerHTML = `
+    <div class="stat-cards">
+      <div class="stat-card"><div class="stat-label">Utilisateurs</div><div class="stat-value">${stats.totalUsers}</div></div>
+      <div class="stat-card"><div class="stat-label">Revenus (paiements complétés)</div><div class="stat-value">${stats.totalRevenue.toFixed(2)} $</div></div>
+      <div class="stat-card"><div class="stat-label">Certificats délivrés</div><div class="stat-value">${stats.certificatesIssued}</div></div>
+      <div class="stat-card"><div class="stat-label">Taux de complétion global</div><div class="stat-value">${stats.completionRate}%</div></div>
+      <div class="stat-card"><div class="stat-label">Leçons terminées (total)</div><div class="stat-value">${stats.lessonsCompletedTotal}</div></div>
+    </div>
+    <h3>Répartition par niveau actuel</h3>
+    <ul>${levelBreakdown || "<li>Aucune donnée</li>"}</ul>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Utilisateurs
+// ---------------------------------------------------------------------------
+async function loadUsers() {
+  const panel = document.getElementById("panel-users");
+  const profiles = await getAllProfiles();
+
+  panel.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Email</th><th>Nom</th><th>Rôle</th><th>Niveau actuel</th><th>Inscrit le</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${profiles.map(p => `
+            <tr data-user-id="${p.id}">
+              <td>${escapeHtml(p.email)}</td>
+              <td>${escapeHtml(p.full_name || "—")}</td>
+              <td>${p.role}</td>
+              <td>${p.current_level}</td>
+              <td>${formatDate(p.created_at)}</td>
+              <td>
+                <div class="admin-actions">
+                  <button class="btn btn-outline btn-reset-progress">Réinitialiser progression</button>
+                  <button class="btn btn-outline btn-toggle-role">${p.role === "admin" ? "Retirer admin" : "Rendre admin"}</button>
+                </div>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  panel.querySelectorAll(".btn-reset-progress").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const userId = row.getAttribute("data-user-id");
+      const email = row.children[0].textContent;
+      if (!confirm(`Réinitialiser toute la progression (leçons + quiz) de ${email} ? Cette action est irréversible.`)) return;
+      btn.disabled = true;
+      const ok = await resetUserProgress(userId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "reset_user_progress", "profiles", userId, { email });
+        alert("Progression réinitialisée.");
+      } else {
+        alert("Erreur lors de la réinitialisation.");
+      }
+      btn.disabled = false;
+    });
+  });
+
+  panel.querySelectorAll(".btn-toggle-role").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const userId = row.getAttribute("data-user-id");
+      const email = row.children[0].textContent;
+      const currentRole = row.children[2].textContent.trim();
+      const newRole = currentRole === "admin" ? "student" : "admin";
+      if (!confirm(`Changer le rôle de ${email} vers "${newRole}" ?`)) return;
+      btn.disabled = true;
+      const ok = await setUserRole(userId, newRole);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "set_user_role", "profiles", userId, { email, newRole });
+        loadedTabs.users = false;
+        loadUsers();
+      } else {
+        alert("Erreur lors du changement de rôle.");
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Contenu académique
+// ---------------------------------------------------------------------------
+async function loadContent() {
+  const panel = document.getElementById("panel-content");
+  const levels = await getLevelsWithCourses();
+
+  panel.innerHTML = levels.map(level => `
+    <div class="admin-content-level">
+      <h2>${level.name}</h2>
+      ${level.courses.map(course => `
+        <div class="admin-content-course" data-course-id="${course.id}">
+          <input class="admin-inline-field course-title-input" value="${escapeHtml(course.title)}">
+          <textarea class="admin-inline-field course-desc-input" style="min-height:50px;">${escapeHtml(course.description || "")}</textarea>
+          <div class="admin-actions">
+            <button class="btn btn-outline btn-save-course">Enregistrer le cours</button>
+            <button class="btn btn-outline btn-delete-course">Supprimer le cours</button>
+          </div>
+
+          ${course.modules.map(mod => `
+            <div class="admin-content-module" data-module-id="${mod.id}">
+              <input class="admin-inline-field module-title-input" value="${escapeHtml(mod.title)}">
+              <div class="admin-actions">
+                <button class="btn btn-outline btn-save-module">Enregistrer le module</button>
+                <button class="btn btn-outline btn-delete-module">Supprimer le module</button>
+              </div>
+
+              ${mod.lessons.map(lesson => `
+                <div class="admin-content-lesson" data-lesson-id="${lesson.id}">
+                  <input class="admin-inline-field lesson-title-input" value="${escapeHtml(lesson.title)}">
+                  <textarea class="admin-inline-field lesson-content-input">${escapeHtml(lesson.content || "")}</textarea>
+                  <div class="admin-actions">
+                    <button class="btn btn-outline btn-save-lesson">Enregistrer la leçon</button>
+                    <button class="btn btn-outline btn-delete-lesson">Supprimer la leçon</button>
+                  </div>
+                </div>
+              `).join("")}
+              <div class="admin-actions" style="margin-top:10px;">
+                <button class="btn btn-primary btn-add-lesson">+ Ajouter une leçon</button>
+              </div>
+            </div>
+          `).join("")}
+          <div class="admin-actions" style="margin-top:10px;">
+            <button class="btn btn-primary btn-add-module">+ Ajouter un module</button>
+          </div>
+        </div>
+      `).join("")}
+      <div class="admin-actions" style="margin-top:6px;">
+        <button class="btn btn-primary btn-add-course" data-level-id="${level.id}" data-next-order="${level.courses.length + 1}">+ Ajouter un cours</button>
+      </div>
+    </div>
+  `).join("");
+
+  wireContentActions(panel);
+}
+
+function wireContentActions(panel) {
+  panel.querySelectorAll(".btn-save-course").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-course");
+      const courseId = block.getAttribute("data-course-id");
+      const title = block.querySelector(".course-title-input").value.trim();
+      const description = block.querySelector(".course-desc-input").value.trim();
+      btn.disabled = true;
+      const ok = await adminUpdateCourse(courseId, title, description);
+      if (ok) await logAdminAction(currentAdmin.id, "update_course", "courses", courseId, { title });
+      else alert("Erreur lors de l'enregistrement du cours.");
+      btn.disabled = false;
+    });
+  });
+
+  panel.querySelectorAll(".btn-delete-course").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-course");
+      const courseId = block.getAttribute("data-course-id");
+      if (!confirm("Supprimer ce cours et tout son contenu (modules, leçons, quiz) ? Irréversible.")) return;
+      const ok = await adminDeleteCourse(courseId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "delete_course", "courses", courseId, {});
+        block.remove();
+      } else {
+        alert("Erreur lors de la suppression du cours.");
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-save-module").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-module");
+      const moduleId = block.getAttribute("data-module-id");
+      const title = block.querySelector(".module-title-input").value.trim();
+      btn.disabled = true;
+      const ok = await adminUpdateModule(moduleId, title);
+      if (ok) await logAdminAction(currentAdmin.id, "update_module", "modules", moduleId, { title });
+      else alert("Erreur lors de l'enregistrement du module.");
+      btn.disabled = false;
+    });
+  });
+
+  panel.querySelectorAll(".btn-delete-module").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-module");
+      const moduleId = block.getAttribute("data-module-id");
+      if (!confirm("Supprimer ce module et toutes ses leçons ? Irréversible.")) return;
+      const ok = await adminDeleteModule(moduleId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "delete_module", "modules", moduleId, {});
+        block.remove();
+      } else {
+        alert("Erreur lors de la suppression du module.");
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-save-lesson").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-lesson");
+      const lessonId = block.getAttribute("data-lesson-id");
+      const title = block.querySelector(".lesson-title-input").value.trim();
+      const content = block.querySelector(".lesson-content-input").value;
+      btn.disabled = true;
+      const ok = await adminUpdateLesson(lessonId, title, content);
+      if (ok) await logAdminAction(currentAdmin.id, "update_lesson", "lessons", lessonId, { title });
+      else alert("Erreur lors de l'enregistrement de la leçon.");
+      btn.disabled = false;
+    });
+  });
+
+  panel.querySelectorAll(".btn-delete-lesson").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const block = e.target.closest(".admin-content-lesson");
+      const lessonId = block.getAttribute("data-lesson-id");
+      if (!confirm("Supprimer cette leçon ? Irréversible.")) return;
+      const ok = await adminDeleteLesson(lessonId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "delete_lesson", "lessons", lessonId, {});
+        block.remove();
+      } else {
+        alert("Erreur lors de la suppression de la leçon.");
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-add-lesson").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const moduleBlock = e.target.closest(".admin-content-module");
+      const moduleId = moduleBlock.getAttribute("data-module-id");
+      const existingCount = moduleBlock.querySelectorAll(".admin-content-lesson").length;
+      const title = prompt("Titre de la nouvelle leçon :");
+      if (!title) return;
+      const created = await adminInsertLesson(moduleId, title, "", existingCount + 1);
+      if (created) {
+        await logAdminAction(currentAdmin.id, "insert_lesson", "lessons", created.id, { title });
+        loadedTabs.content = false;
+        loadContent();
+      } else {
+        alert("Erreur lors de la création de la leçon.");
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-add-module").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const courseBlock = e.target.closest(".admin-content-course");
+      const courseId = courseBlock.getAttribute("data-course-id");
+      const existingCount = courseBlock.querySelectorAll(".admin-content-module").length;
+      const title = prompt("Titre du nouveau module :");
+      if (!title) return;
+      const created = await adminInsertModule(courseId, title, existingCount + 1);
+      if (created) {
+        await logAdminAction(currentAdmin.id, "insert_module", "modules", created.id, { title });
+        loadedTabs.content = false;
+        loadContent();
+      } else {
+        alert("Erreur lors de la création du module.");
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-add-course").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const levelId = e.target.getAttribute("data-level-id");
+      const nextOrder = Number(e.target.getAttribute("data-next-order"));
+      const title = prompt("Titre du nouveau cours :");
+      if (!title) return;
+      const description = prompt("Description courte (optionnel) :") || "";
+      const created = await adminInsertCourse(levelId, title, description, nextOrder);
+      if (created) {
+        await logAdminAction(currentAdmin.id, "insert_course", "courses", created.id, { title, levelId });
+        loadedTabs.content = false;
+        loadContent();
+      } else {
+        alert("Erreur lors de la création du cours.");
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Paiements
+// ---------------------------------------------------------------------------
+async function loadPayments() {
+  const panel = document.getElementById("panel-payments");
+  const payments = await getAllPayments();
+
+  panel.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Utilisateur</th><th>Niveau</th><th>Montant</th><th>Fournisseur</th><th>Statut</th><th>Date</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${payments.map(p => `
+            <tr data-payment-id="${p.id}" data-user-id="${p.user_id}" data-level-id="${p.level_id}">
+              <td>${escapeHtml(p.profiles?.email || "—")}</td>
+              <td>${escapeHtml(p.levels?.name || p.level_id)}</td>
+              <td>${Number(p.amount_usd).toFixed(2)} $</td>
+              <td>${escapeHtml(p.provider)}</td>
+              <td><span class="badge ${p.status === "completed" ? "done" : ""}">${p.status}</span></td>
+              <td>${formatDate(p.created_at)}</td>
+              <td>
+                ${p.status !== "completed"
+                  ? `<button class="btn btn-outline btn-mark-paid">Marquer complété + accès</button>`
+                  : "—"}
+              </td>
+            </tr>
+          `).join("") || `<tr><td colspan="7">Aucun paiement pour le moment.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  panel.querySelectorAll(".btn-mark-paid").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const paymentId = row.getAttribute("data-payment-id");
+      const userId = row.getAttribute("data-user-id");
+      const levelId = row.getAttribute("data-level-id");
+      if (!confirm("Confirmer ce paiement et accorder l'accès au niveau ?")) return;
+      btn.disabled = true;
+      const ok = await markPaymentCompletedAndGrantAccess(paymentId, userId, levelId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "mark_payment_completed", "payments", paymentId, { userId, levelId });
+        loadedTabs.payments = false;
+        loadPayments();
+      } else {
+        alert("Erreur lors de la validation du paiement.");
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Certificats
+// ---------------------------------------------------------------------------
+async function loadCertificates() {
+  const panel = document.getElementById("panel-certificates");
+  const certificates = await getAllCertificates();
+
+  panel.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Utilisateur</th><th>Niveau</th><th>Identifiant</th><th>Délivré le</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${certificates.map(c => `
+            <tr data-cert-id="${c.id}">
+              <td>${escapeHtml(c.profiles?.email || "—")}</td>
+              <td>${escapeHtml(c.levels?.name || c.level_id)}</td>
+              <td>${escapeHtml(c.certificate_uid)}</td>
+              <td>${formatDate(c.issued_at)}</td>
+              <td><button class="btn btn-outline btn-revoke-cert">Révoquer</button></td>
+            </tr>
+          `).join("") || `<tr><td colspan="5">Aucun certificat délivré pour le moment.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  panel.querySelectorAll(".btn-revoke-cert").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const certId = row.getAttribute("data-cert-id");
+      if (!confirm("Révoquer ce certificat ? Irréversible.")) return;
+      const ok = await revokeCertificate(certId);
+      if (ok) {
+        await logAdminAction(currentAdmin.id, "revoke_certificate", "certificates", certId, {});
+        row.remove();
+      } else {
+        alert("Erreur lors de la révocation.");
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Journal d'audit
+// ---------------------------------------------------------------------------
+async function loadAudit() {
+  const panel = document.getElementById("panel-audit");
+  const entries = await getAdminAuditLog(50);
+
+  panel.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Date</th><th>Admin</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
+        <tbody>
+          ${entries.map(e => `
+            <tr>
+              <td>${new Date(e.created_at).toLocaleString("fr-FR")}</td>
+              <td>${escapeHtml(e.profiles?.email || "—")}</td>
+              <td>${escapeHtml(e.action)}</td>
+              <td>${escapeHtml(e.target_table || "—")}${e.target_id ? " / " + escapeHtml(e.target_id).slice(0, 8) + "..." : ""}</td>
+              <td>${e.details ? escapeHtml(JSON.stringify(e.details)) : "—"}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="5">Aucune action enregistrée pour le moment.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
