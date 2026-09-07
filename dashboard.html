@@ -26,6 +26,7 @@
     <a href="#" title="Bientôt disponible">Journal de trading</a>
     <a href="#" title="Bientôt disponible">Communauté</a>
     <a href="#" title="Bientôt disponible">Certificats</a>
+    <a href="admin.html" id="admin-nav-link" style="display:none;">⚙ Administration</a>
   </nav>
 
   <main>
@@ -54,6 +55,9 @@ if (typeof requireAuth !== "function") {
 
   const profile = await getCurrentProfile();
   document.getElementById("user-name").textContent = profile?.full_name || user.email;
+  if (profile?.role === "admin") {
+    document.getElementById("admin-nav-link").style.display = "";
+  }
 
   const [levels, access, completedIds] = await Promise.all([
     getLevelsWithCourses(),
