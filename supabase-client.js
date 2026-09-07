@@ -332,3 +332,241 @@ async function issueCertificateIfEligible(userId, levelId) {
   }
   return { issued: true, eligible: true, certificate: data };
 }
+
+// ----------------------------------------------------------------------------
+// Administration
+// ----------------------------------------------------------------------------
+
+// Enregistre une action admin dans admin_audit_log (best-effort : n'échoue pas
+// bruyamment si le log échoue, car il ne doit jamais bloquer l'action elle-même).
+async function logAdminAction(adminId, action, targetTable, targetId, details) {
+  const { error } = await supabase.from("admin_audit_log").insert({
+    admin_id: adminId,
+    action,
+    target_table: targetTable || null,
+    target_id: targetId ? String(targetId) : null,
+    details: details || null
+  });
+  if (error) console.error("Erreur lors de l'enregistrement de l'audit :", error);
+}
+
+async function getAdminAuditLog(limitCount) {
+  const { data, error } = await supabase
+    .from("admin_audit_log")
+    .select("id, action, target_table, target_id, details, created_at, profiles ( email, full_name )")
+    .order("created_at", { ascending: false })
+    .limit(limitCount || 50);
+  if (error) {
+    console.error("Erreur lors du chargement du journal d'audit :", error);
+    return [];
+  }
+  return data;
+}
+
+// ---- Statistiques ----
+
+async function getPlatformStats() {
+  const [
+    { count: totalUsers },
+    { data: profilesByLevel },
+    { data: payments },
+    { count: certificatesIssued },
+    { count: lessonsCompletedTotal },
+    { count: totalLessons }
+  ] = await Promise.all([
+    supabase.from("profiles").select("*", { count: "exact", head: true }),
+    supabase.from("profiles").select("current_level"),
+    supabase.from("payments").select("amount_usd, status"),
+    supabase.from("certificates").select("*", { count: "exact", head: true }),
+    supabase.from("lesson_progress").select("*", { count: "exact", head: true }),
+    supabase.from("lessons").select("*", { count: "exact", head: true })
+  ]);
+
+  const levelCounts = {};
+  (profilesByLevel || []).forEach(p => {
+    levelCounts[p.current_level] = (levelCounts[p.current_level] || 0) + 1;
+  });
+
+  const totalRevenue = (payments || [])
+    .filter(p => p.status === "completed")
+    .reduce((sum, p) => sum + Number(p.amount_usd), 0);
+
+  const completionRate = (totalUsers && totalLessons)
+    ? Math.round(((lessonsCompletedTotal || 0) / (totalUsers * totalLessons)) * 1000) / 10
+    : 0;
+
+  return {
+    totalUsers: totalUsers || 0,
+    levelCounts,
+    totalRevenue,
+    certificatesIssued: certificatesIssued || 0,
+    lessonsCompletedTotal: lessonsCompletedTotal || 0,
+    totalLessons: totalLessons || 0,
+    completionRate
+  };
+}
+
+// ---- Utilisateurs ----
+
+async function getAllProfiles() {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, email, full_name, role, current_level, created_at")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des utilisateurs :", error);
+    return [];
+  }
+  return data;
+}
+
+// Supprime la progression (leçons + tentatives de quiz, qui entraîne la
+// suppression en cascade des réponses de quiz) d'un utilisateur.
+async function resetUserProgress(userId) {
+  const [lessonRes, quizRes] = await Promise.all([
+    supabase.from("lesson_progress").delete().eq("user_id", userId),
+    supabase.from("quiz_attempts").delete().eq("user_id", userId)
+  ]);
+  if (lessonRes.error || quizRes.error) {
+    console.error("Erreur lors de la réinitialisation :", lessonRes.error || quizRes.error);
+    return false;
+  }
+  return true;
+}
+
+async function setUserRole(userId, role) {
+  const { error } = await supabase.from("profiles").update({ role }).eq("id", userId);
+  if (error) {
+    console.error("Erreur lors du changement de rôle :", error);
+    return false;
+  }
+  return true;
+}
+
+async function setUserLevel(userId, levelId) {
+  const { error } = await supabase.from("profiles").update({ current_level: levelId }).eq("id", userId);
+  if (error) {
+    console.error("Erreur lors du changement de niveau :", error);
+    return false;
+  }
+  return true;
+}
+
+// ---- Paiements ----
+
+async function getAllPayments() {
+  const { data, error } = await supabase
+    .from("payments")
+    .select("id, amount_usd, provider, provider_reference, status, created_at, user_id, level_id, profiles ( email ), levels ( name )")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des paiements :", error);
+    return [];
+  }
+  return data;
+}
+
+// Marque un paiement comme complété et accorde l'accès au niveau correspondant.
+async function markPaymentCompletedAndGrantAccess(paymentId, userId, levelId) {
+  const { error: payError } = await supabase
+    .from("payments")
+    .update({ status: "completed" })
+    .eq("id", paymentId);
+  if (payError) {
+    console.error("Erreur lors de la mise à jour du paiement :", payError);
+    return false;
+  }
+  const { error: accessError } = await supabase
+    .from("level_access")
+    .upsert({ user_id: userId, level_id: levelId }, { onConflict: "user_id,level_id" });
+  if (accessError) {
+    console.error("Erreur lors de l'attribution de l'accès :", accessError);
+    return false;
+  }
+  return true;
+}
+
+// ---- Certificats ----
+
+async function getAllCertificates() {
+  const { data, error } = await supabase
+    .from("certificates")
+    .select("id, certificate_uid, issued_at, user_id, level_id, profiles ( email, full_name ), levels ( name )")
+    .order("issued_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des certificats :", error);
+    return [];
+  }
+  return data;
+}
+
+async function revokeCertificate(certificateId) {
+  const { error } = await supabase.from("certificates").delete().eq("id", certificateId);
+  if (error) {
+    console.error("Erreur lors de la révocation du certificat :", error);
+    return false;
+  }
+  return true;
+}
+
+// ---- Contenu académique (cours / modules / leçons) ----
+
+async function adminUpdateCourse(courseId, title, description) {
+  const { error } = await supabase.from("courses").update({ title, description }).eq("id", courseId);
+  return !error;
+}
+
+async function adminInsertCourse(levelId, title, description, orderIndex) {
+  const { data, error } = await supabase
+    .from("courses")
+    .insert({ level_id: levelId, title, description, order_index: orderIndex })
+    .select()
+    .single();
+  if (error) console.error("Erreur lors de la création du cours :", error);
+  return data || null;
+}
+
+async function adminDeleteCourse(courseId) {
+  const { error } = await supabase.from("courses").delete().eq("id", courseId);
+  return !error;
+}
+
+async function adminUpdateModule(moduleId, title) {
+  const { error } = await supabase.from("modules").update({ title }).eq("id", moduleId);
+  return !error;
+}
+
+async function adminInsertModule(courseId, title, orderIndex) {
+  const { data, error } = await supabase
+    .from("modules")
+    .insert({ course_id: courseId, title, order_index: orderIndex })
+    .select()
+    .single();
+  if (error) console.error("Erreur lors de la création du module :", error);
+  return data || null;
+}
+
+async function adminDeleteModule(moduleId) {
+  const { error } = await supabase.from("modules").delete().eq("id", moduleId);
+  return !error;
+}
+
+async function adminUpdateLesson(lessonId, title, content) {
+  const { error } = await supabase.from("lessons").update({ title, content }).eq("id", lessonId);
+  return !error;
+}
+
+async function adminInsertLesson(moduleId, title, content, orderIndex) {
+  const { data, error } = await supabase
+    .from("lessons")
+    .insert({ module_id: moduleId, title, content, order_index: orderIndex })
+    .select()
+    .single();
+  if (error) console.error("Erreur lors de la création de la leçon :", error);
+  return data || null;
+}
+
+async function adminDeleteLesson(lessonId) {
+  const { error } = await supabase.from("lessons").delete().eq("id", lessonId);
+  return !error;
+}
