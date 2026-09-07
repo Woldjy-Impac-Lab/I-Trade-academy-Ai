@@ -3,7 +3,7 @@
 // ============================================================================
 // Chargé via CDN dans chaque page :
 // <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-// <script src="supabase-client.js"></script>
+// <script src="js/supabase-client.js"></script>
 
 // "var" (et non "const") volontairement : si ce script est chargé deux fois
 // sur la même page (double <script src>, cache, etc.), "const" provoquerait
@@ -614,4 +614,237 @@ async function pollForLevelAccess(userId, levelId, maxTries, intervalMs) {
     await new Promise(resolve => setTimeout(resolve, intervalMs || 3000));
   }
   return false;
+}
+
+// ----------------------------------------------------------------------------
+// Communauté
+// ----------------------------------------------------------------------------
+
+async function getCommunityCategories() {
+  const { data, error } = await supabase
+    .from("community_categories")
+    .select("id, name")
+    .order("id");
+  if (error) {
+    console.error("Erreur lors du chargement des catégories :", error);
+    return [];
+  }
+  return data;
+}
+
+// categoryId optionnel : sans filtre, retourne tous les sujets visibles
+// (la RLS masque déjà automatiquement ceux marqués is_hidden pour les
+// non-auteurs et non-admins).
+async function getCommunityPosts(categoryId) {
+  let query = supabase
+    .from("community_posts")
+    .select(`
+      id, title, content, category_id, is_hidden, created_at, user_id,
+      profiles ( email, full_name ),
+      community_comments ( count )
+    `)
+    .order("created_at", { ascending: false });
+  if (categoryId) query = query.eq("category_id", categoryId);
+  const { data, error } = await query;
+  if (error) {
+    console.error("Erreur lors du chargement des sujets :", error);
+    return [];
+  }
+  return data;
+}
+
+async function getCommunityPostDetail(postId) {
+  const { data, error } = await supabase
+    .from("community_posts")
+    .select(`
+      id, title, content, category_id, is_hidden, created_at, user_id,
+      profiles ( email, full_name ),
+      community_categories ( id, name )
+    `)
+    .eq("id", postId)
+    .maybeSingle();
+  if (error) {
+    console.error("Erreur lors du chargement du sujet :", error);
+    return null;
+  }
+  return data;
+}
+
+async function getCommunityComments(postId) {
+  const { data, error } = await supabase
+    .from("community_comments")
+    .select("id, content, is_hidden, created_at, user_id, profiles ( email, full_name )")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("Erreur lors du chargement des commentaires :", error);
+    return [];
+  }
+  return data;
+}
+
+async function createCommunityPost(userId, categoryId, title, content) {
+  const { data, error } = await supabase
+    .from("community_posts")
+    .insert({ user_id: userId, category_id: categoryId, title, content })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de la création du sujet :", error);
+    return null;
+  }
+  return data;
+}
+
+async function createCommunityComment(userId, postId, content) {
+  const { data, error } = await supabase
+    .from("community_comments")
+    .insert({ user_id: userId, post_id: postId, content })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de l'envoi du commentaire :", error);
+    return null;
+  }
+  return data;
+}
+
+// ---- Modération (auteur ou admin) ----
+
+async function setCommunityPostHidden(postId, hidden) {
+  const { error } = await supabase.from("community_posts").update({ is_hidden: hidden }).eq("id", postId);
+  return !error;
+}
+
+async function deleteCommunityPost(postId) {
+  const { error } = await supabase.from("community_posts").delete().eq("id", postId);
+  return !error;
+}
+
+async function setCommunityCommentHidden(commentId, hidden) {
+  const { error } = await supabase.from("community_comments").update({ is_hidden: hidden }).eq("id", commentId);
+  return !error;
+}
+
+async function deleteCommunityComment(commentId) {
+  const { error } = await supabase.from("community_comments").delete().eq("id", commentId);
+  return !error;
+}
+
+// ----------------------------------------------------------------------------
+// Communauté
+// ----------------------------------------------------------------------------
+
+// Filtre de modération automatique très simple, côté client : une liste de
+// mots-clés interdits. Pour une modération automatique sérieuse, remplacer
+// par un appel à une Edge Function utilisant une vraie API de modération de
+// contenu (voir le modèle des fonctions de paiement dans supabase/functions/).
+const COMMUNITY_FORBIDDEN_WORDS = [
+  "arnaque garantie", "gain garanti à 100", "signal payant", "pyramide financière"
+];
+
+function containsForbiddenContent(text) {
+  const lower = (text || "").toLowerCase();
+  return COMMUNITY_FORBIDDEN_WORDS.some(word => lower.includes(word));
+}
+
+async function getCommunityCategories() {
+  const { data, error } = await supabase
+    .from("community_categories")
+    .select("id, name");
+  if (error) {
+    console.error("Erreur lors du chargement des catégories :", error);
+    return [];
+  }
+  return data;
+}
+
+async function getCommunityPosts(categoryId) {
+  let query = supabase
+    .from("community_posts")
+    .select("id, title, content, is_hidden, created_at, user_id, category_id, profiles ( email, full_name ), community_categories ( name )")
+    .order("created_at", { ascending: false });
+  if (categoryId) query = query.eq("category_id", categoryId);
+  const { data, error } = await query;
+  if (error) {
+    console.error("Erreur lors du chargement des sujets :", error);
+    return [];
+  }
+  return data;
+}
+
+async function getPostDetail(postId) {
+  const { data, error } = await supabase
+    .from("community_posts")
+    .select("id, title, content, is_hidden, created_at, user_id, category_id, profiles ( email, full_name ), community_categories ( name )")
+    .eq("id", postId)
+    .single();
+  if (error) {
+    console.error("Erreur lors du chargement du sujet :", error);
+    return null;
+  }
+  return data;
+}
+
+async function getPostComments(postId) {
+  const { data, error } = await supabase
+    .from("community_comments")
+    .select("id, content, is_hidden, created_at, user_id, profiles ( email, full_name )")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("Erreur lors du chargement des commentaires :", error);
+    return [];
+  }
+  return data;
+}
+
+// Retourne { post, flagged } — flagged indique si le filtre de modération
+// automatique a mis le sujet en attente (is_hidden = true) à la création.
+async function createCommunityPost(userId, categoryId, title, content) {
+  const flagged = containsForbiddenContent(title) || containsForbiddenContent(content);
+  const { data, error } = await supabase
+    .from("community_posts")
+    .insert({ user_id: userId, category_id: categoryId, title, content, is_hidden: flagged })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de la création du sujet :", error);
+    return { post: null, flagged: false, error };
+  }
+  return { post: data, flagged };
+}
+
+async function createComment(postId, userId, content) {
+  const flagged = containsForbiddenContent(content);
+  const { data, error } = await supabase
+    .from("community_comments")
+    .insert({ post_id: postId, user_id: userId, content, is_hidden: flagged })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de la publication du commentaire :", error);
+    return { comment: null, flagged: false, error };
+  }
+  return { comment: data, flagged };
+}
+
+// Bascule la visibilité (masquer/afficher) — auteur ou admin selon les
+// policies RLS "community_posts_update" / "community_comments_update".
+async function setPostHidden(postId, hidden) {
+  const { error } = await supabase.from("community_posts").update({ is_hidden: hidden }).eq("id", postId);
+  return !error;
+}
+
+async function setCommentHidden(commentId, hidden) {
+  const { error } = await supabase.from("community_comments").update({ is_hidden: hidden }).eq("id", commentId);
+  return !error;
+}
+
+// Suppression définitive d'un sujet (auteur ou admin uniquement, voir policy
+// "community_posts_delete"). Les commentaires n'ont pas de policy de
+// suppression : on ne peut que les masquer, jamais les effacer définitivement.
+async function deleteCommunityPost(postId) {
+  const { error } = await supabase.from("community_posts").delete().eq("id", postId);
+  return !error;
 }
