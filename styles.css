@@ -567,3 +567,47 @@ section.alt { background: var(--paper-raised); border-top: 1px solid var(--line)
 textarea.admin-inline-field { min-height: 90px; resize: vertical; }
 
 .admin-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ---------- Checkout ---------- */
+
+.checkout-card {
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 32px;
+}
+
+.checkout-price {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  color: var(--sienna);
+  margin: 8px 0 20px;
+}
+
+.checkout-methods { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+
+.checkout-method-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #fff;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.checkout-method-btn:hover { border-color: var(--forest); }
+
+.checkout-method-btn.stripe { background: #635BFF; color: #fff; border-color: #635BFF; }
+.checkout-method-btn.stripe:hover { background: #4b44d6; }
+
+#paypal-button-container { min-height: 45px; }
+
+.checkout-status {
+  text-align: center;
+  padding: 40px 24px;
+}
