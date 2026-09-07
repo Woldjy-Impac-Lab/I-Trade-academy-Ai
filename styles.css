@@ -457,3 +457,113 @@ section.alt { background: var(--paper-raised); border-top: 1px solid var(--line)
   padding: 16px 0;
   border-top: 1px solid var(--line);
 }
+
+/* ---------- Admin dashboard ---------- */
+
+.admin-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-tab {
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.admin-tab.active { color: var(--forest-dark); border-bottom-color: var(--forest); }
+
+.admin-panel { display: none; }
+.admin-panel.active { display: block; }
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 32px;
+}
+
+.stat-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.stat-card .stat-value {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  color: var(--forest-dark);
+  margin: 4px 0;
+}
+
+.stat-card .stat-label {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.admin-table-wrap { overflow-x: auto; margin-bottom: 32px; }
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.admin-table th, .admin-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.admin-table th { color: var(--ink-soft); font-weight: 600; }
+
+.admin-table .btn { padding: 6px 12px; font-size: 0.82rem; }
+
+.admin-content-level {
+  margin-bottom: 36px;
+}
+
+.admin-content-course {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 12px 0;
+  background: var(--paper-raised);
+}
+
+.admin-content-module {
+  border-left: 3px solid var(--forest);
+  padding: 10px 0 10px 14px;
+  margin: 12px 0;
+}
+
+.admin-content-lesson {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.admin-inline-field {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+textarea.admin-inline-field { min-height: 90px; resize: vertical; }
+
+.admin-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
