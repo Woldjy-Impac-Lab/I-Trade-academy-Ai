@@ -570,3 +570,48 @@ async function adminDeleteLesson(lessonId) {
   const { error } = await supabase.from("lessons").delete().eq("id", lessonId);
   return !error;
 }
+
+// ----------------------------------------------------------------------------
+// Paiement (checkout)
+// ----------------------------------------------------------------------------
+
+async function getLevelById(levelId) {
+  const { data, error } = await supabase
+    .from("levels")
+    .select("id, name, order_index, price_usd, description")
+    .eq("id", levelId)
+    .single();
+  if (error) {
+    console.error("Erreur lors du chargement du niveau :", error);
+    return null;
+  }
+  return data;
+}
+
+// Appelle une Supabase Edge Function déployée séparément (voir
+// supabase/functions/) en transmettant automatiquement le jeton de
+// l'utilisateur connecté. Retourne { data } ou { error }.
+async function invokeEdgeFunction(name, body) {
+  try {
+    const { data, error } = await supabase.functions.invoke(name, { body });
+    if (error) {
+      console.error(`Erreur lors de l'appel à la fonction "${name}" :`, error);
+      return { error };
+    }
+    return { data };
+  } catch (err) {
+    console.error(`Exception lors de l'appel à la fonction "${name}" :`, err);
+    return { error: err };
+  }
+}
+
+// Vérifie périodiquement si l'accès au niveau a été accordé (utilisé après un
+// retour de paiement, en attendant la confirmation asynchrone du webhook).
+async function pollForLevelAccess(userId, levelId, maxTries, intervalMs) {
+  for (let i = 0; i < (maxTries || 20); i++) {
+    const access = await getUserLevelAccess(userId);
+    if (access.includes(levelId)) return true;
+    await new Promise(resolve => setTimeout(resolve, intervalMs || 3000));
+  }
+  return false;
+}
