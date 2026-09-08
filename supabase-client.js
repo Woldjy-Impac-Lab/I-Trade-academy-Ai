@@ -8,7 +8,7 @@
 // "var" (et non "const") volontairement : si ce script est chargé deux fois
 // sur la même page (double <script src>, cache, etc.), "const" provoquerait
 // un "Identifier has already been declared" qui casse tout le fichier.
-var SUPABASE_URL = https://lvghtaqhzssasmldmkqq.supabase.co";
+var SUPABASE_URL = "https://lvghtaqhzssasmldmkqq.supabase.co";
 var SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1woMQp6pTiZIG3lzMVdV7g_mfFdN0Rp";
 
 // Garde en plus : ne recrée pas le client s'il existe déjà.
