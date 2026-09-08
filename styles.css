@@ -763,6 +763,80 @@ textarea.admin-inline-field { min-height: 90px; resize: vertical; }
 .feedback-block .feedback-bad { color: var(--danger); }
 .feedback-block .feedback-lesson { color: var(--ink-soft); }
 
+/* ---------- Certificats ---------- */
+
+.cert-list-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 12px;
+  background: var(--paper-raised);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.cert-list-card .cert-uid {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-family: monospace;
+}
+
+.certificate-frame {
+  border: 2px solid var(--forest);
+  border-radius: 8px;
+  padding: 48px 32px;
+  text-align: center;
+  background: var(--paper-raised);
+  max-width: 620px;
+  margin: 0 auto 24px;
+  position: relative;
+}
+
+.certificate-frame::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.certificate-eyebrow {
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sienna);
+  font-weight: 600;
+}
+
+.certificate-name {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--forest-dark);
+  margin: 14px 0 6px;
+}
+
+.certificate-level {
+  font-size: 1.15rem;
+  color: var(--ink);
+  margin-bottom: 18px;
+}
+
+.certificate-meta {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-top: 18px;
+}
+
+@media print {
+  .site-header, .btn, .cert-list-card, .no-print { display: none !important; }
+  body { background: #fff; }
+  .certificate-frame { border-width: 3px; }
+}
+
 /* ---------- Journal de trading ---------- */
 
 .insights-card {
