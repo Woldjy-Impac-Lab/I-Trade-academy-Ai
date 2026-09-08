@@ -29,7 +29,7 @@ if (typeof requireAuth !== "function") {
   document.getElementById("lesson-shell").innerHTML =
     '<div class="form-msg error" style="display:block;">' +
     'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé. ' +
-    'Vérifie qu\'il existe bien au chemin "js/supabase-client.js" à côté de lesson.html.' +
+    'Vérifie qu\'il existe bien au chemin "supabase-client.js" à côté de lesson.html.' +
     '</div>';
   throw new Error("supabase-client.js non chargé — arrêt du script lesson.");
 }
