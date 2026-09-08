@@ -1066,3 +1066,63 @@ async function getUserCertificates(userId) {
   }
   return data;
 }
+
+// ----------------------------------------------------------------------------
+// Atlas — coach IA
+// ----------------------------------------------------------------------------
+
+async function getAtlasConversations(userId) {
+  const { data, error } = await supabase
+    .from("coach_conversations")
+    .select("id, created_at, coach_messages ( count )")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des conversations Atlas :", error);
+    return [];
+  }
+  return data;
+}
+
+async function getAtlasMessages(conversationId) {
+  const { data, error } = await supabase
+    .from("coach_messages")
+    .select("id, role, content, chart_image_url, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("Erreur lors du chargement des messages Atlas :", error);
+    return [];
+  }
+  return data;
+}
+
+// Dépose une image de graphique dans le bucket "chart-images" (dossier
+// propre à l'utilisateur) et retourne son URL publique.
+async function uploadChartImage(userId, file) {
+  const path = `${userId}/${Date.now()}-${file.name}`;
+  const { error: uploadError } = await supabase.storage
+    .from("chart-images")
+    .upload(path, file, { upsert: false });
+  if (uploadError) {
+    console.error("Erreur lors de l'envoi de l'image :", uploadError);
+    return null;
+  }
+  const { data } = supabase.storage.from("chart-images").getPublicUrl(path);
+  return data?.publicUrl || null;
+}
+
+// Envoie un message à Atlas via l'Edge Function "atlas-chat" (qui gère
+// l'appel à l'API IA et l'enregistrement des messages côté serveur).
+// Retourne { conversationId, reply } ou { error }.
+async function sendAtlasMessage(conversationId, message, imageUrl) {
+  const { data, error } = await invokeEdgeFunction("atlas-chat", {
+    conversation_id: conversationId || null,
+    message,
+    image_url: imageUrl || null,
+  });
+  if (error || !data) {
+    return { error: error || new Error("Réponse vide") };
+  }
+  return { conversationId: data.conversation_id, reply: data.reply };
+}
