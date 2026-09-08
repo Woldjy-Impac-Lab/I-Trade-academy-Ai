@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quiz — I Trade Academy AI</title>
-<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -23,12 +23,12 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/supabase-client.js"></script>
+<script src="supabase-client.js"></script>
 <script>
 if (typeof requireAuth !== "function") {
   document.getElementById("quiz-shell").innerHTML =
     '<div class="form-msg error" style="display:block;">' +
-    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    'Erreur de chargement : le fichier supabase-client.js n\'a pas pu être chargé.' +
     '</div>';
   throw new Error("supabase-client.js non chargé — arrêt du script quiz.");
 }
