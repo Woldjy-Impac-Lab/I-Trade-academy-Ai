@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulateur — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="padding-top:32px; padding-bottom:80px; max-width:760px;">
+  <h1 style="margin-bottom:4px;">Simulateur de trading</h1>
+  <p>Argent virtuel, prix réels du marché crypto, aucun risque financier. Chaque position fermée reçoit une analyse détaillée.</p>
+
+  <div id="sim-shell">
+    <p>Chargement...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("sim-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script simulator.");
+}
+
+// Instruments disponibles dans le simulateur. Les prix viennent de l'API
+// publique CoinGecko (aucune clé requise), appelée directement depuis le
+// navigateur de l'utilisateur.
+const INSTRUMENTS = [
+  { id: "bitcoin", symbol: "BTC/USD", decimals: 2 },
+  { id: "ethereum", symbol: "ETH/USD", decimals: 2 },
+  { id: "solana", symbol: "SOL/USD", decimals: 2 },
+  { id: "dogecoin", symbol: "DOGE/USD", decimals: 4 },
+];
+
+let currentUser = null;
+let currentBalance = 0;
+let latestPrices = {}; // { "BTC/USD": 65000.12, ... }
+let selectedInstrument = INSTRUMENTS[0].symbol;
+let selectedSide = "buy";
+
+function fmt(n, decimals) {
+  return Number(n).toLocaleString("fr-FR", { minimumFractionDigits: decimals ?? 2, maximumFractionDigits: decimals ?? 2 });
+}
+
+function instrumentByIdFromSymbol(symbol) {
+  return INSTRUMENTS.find(i => i.symbol === symbol);
+}
+
+(async () => {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+
+  const shell = document.getElementById("sim-shell");
+
+  // Le simulateur se débloque une fois le niveau Intermédiaire terminé
+  // (leçons + quiz), attesté par le certificat correspondant.
+  const cert = await getUserCertificateForLevel(currentUser.id, "intermediaire");
+  if (!cert) {
+    shell.innerHTML = `
+      <div class="lesson-locked">
+        <h2>Simulateur verrouillé</h2>
+        <p>Le simulateur se débloque une fois le niveau Intermédiaire terminé (toutes les leçons + les deux quiz réussis).</p>
+        <a href="dashboard.html" class="btn btn-primary">← Retour au tableau de bord</a>
+      </div>`;
+    return;
+  }
+
+  const account = await ensureSimulatorAccount(currentUser.id);
+  if (!account) {
+    shell.innerHTML = `<p>Impossible de charger le compte simulateur. Réessaie dans un instant.</p>`;
+    return;
+  }
+  currentBalance = Number(account.virtual_balance);
+
+  renderShell();
+  await refreshPrices();
+  await refreshPositions();
+})();
+
+function renderShell() {
+  const shell = document.getElementById("sim-shell");
+  shell.innerHTML = `
+    <div class="balance-card">
+      <div>
+        <div style="font-size:0.85rem; color:var(--ink-soft);">Solde virtuel</div>
+        <div class="balance-value" id="balance-display">${fmt(currentBalance)} $</div>
+      </div>
+      <button class="btn btn-outline" id="reset-balance-btn">Réinitialiser le compte</button>
+    </div>
+
+    <h3>Instruments</h3>
+    <div class="instrument-grid" id="instrument-grid"></div>
+
+    <h3>Ouvrir une position</h3>
+    <div class="trade-form-row">
+      <div class="side-toggle">
+        <button class="side-btn buy selected" data-side="buy">Acheter (long)</button>
+        <button class="side-btn sell" data-side="sell">Vendre (short)</button>
+      </div>
+    </div>
+    <div class="trade-form-row">
+      <div class="field" style="margin:0; flex:1; min-width:160px;">
+        <label for="usd-amount">Montant engagé (USD virtuels)</label>
+        <input type="number" id="usd-amount" class="admin-inline-field" value="1000" min="1" step="1">
+      </div>
+      <button class="btn btn-primary" id="open-trade-btn">Ouvrir la position</button>
+    </div>
+    <div id="trade-msg" class="form-msg"></div>
+
+    <h3>Positions ouvertes</h3>
+    <div id="open-positions"><p>Chargement...</p></div>
+
+    <h3>Historique</h3>
+    <div id="closed-positions"><p>Chargement...</p></div>
+  `;
+
+  document.getElementById("instrument-grid").innerHTML = INSTRUMENTS.map(inst => `
+    <div class="instrument-card ${inst.symbol === selectedInstrument ? "selected" : ""}" data-symbol="${inst.symbol}">
+      <div class="instrument-symbol">${inst.symbol}</div>
+      <div class="instrument-price" data-price-for="${inst.symbol}">—</div>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".instrument-card").forEach(card => {
+    card.addEventListener("click", () => {
+      selectedInstrument = card.getAttribute("data-symbol");
+      document.querySelectorAll(".instrument-card").forEach(c => c.classList.toggle("selected", c === card));
+    });
+  });
+
+  document.querySelectorAll(".side-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      selectedSide = btn.getAttribute("data-side");
+      document.querySelectorAll(".side-btn").forEach(b => b.classList.toggle("selected", b === btn));
+    });
+  });
+
+  document.getElementById("reset-balance-btn").addEventListener("click", async () => {
+    if (!confirm("Réinitialiser le solde virtuel à 100 000 $ ? L'historique des positions est conservé.")) return;
+    const ok = await resetSimulatorBalance(currentUser.id);
+    if (ok) {
+      currentBalance = 100000;
+      document.getElementById("balance-display").textContent = fmt(currentBalance) + " $";
+    } else {
+      alert("Erreur lors de la réinitialisation.");
+    }
+  });
+
+  document.getElementById("open-trade-btn").addEventListener("click", handleOpenTrade);
+}
+
+async function refreshPrices() {
+  const ids = INSTRUMENTS.map(i => i.id).join(",");
+  try {
+    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+    const data = await res.json();
+    latestPrices = {};
+    INSTRUMENTS.forEach(inst => {
+      const price = data[inst.id]?.usd;
+      if (price != null) {
+        latestPrices[inst.symbol] = price;
+        const el = document.querySelector(`[data-price-for="${inst.symbol}"]`);
+        if (el) el.textContent = fmt(price, inst.decimals) + " $";
+      }
+    });
+  } catch (err) {
+    console.error("Erreur lors du chargement des prix :", err);
+    const msg = document.getElementById("trade-msg");
+    if (msg) {
+      msg.textContent = "Impossible de récupérer les prix du marché pour le moment.";
+      msg.className = "form-msg error";
+    }
+  }
+}
+
+async function handleOpenTrade() {
+  const msg = document.getElementById("trade-msg");
+  const usdAmount = Number(document.getElementById("usd-amount").value);
+  const price = latestPrices[selectedInstrument];
+
+  if (!price) {
+    msg.textContent = "Prix indisponible pour cet instrument, réessaie dans un instant.";
+    msg.className = "form-msg error";
+    return;
+  }
+  if (!usdAmount || usdAmount <= 0) {
+    msg.textContent = "Indique un montant valide.";
+    msg.className = "form-msg error";
+    return;
+  }
+  if (usdAmount > currentBalance * 10) {
+    msg.textContent = "Montant trop élevé par rapport à ton solde (levier maximal simulé : x10).";
+    msg.className = "form-msg error";
+    return;
+  }
+
+  const btn = document.getElementById("open-trade-btn");
+  btn.disabled = true;
+  btn.textContent = "Ouverture...";
+
+  const quantity = usdAmount / price;
+  const created = await openSimulatorTrade(currentUser.id, selectedInstrument, selectedSide, quantity, price);
+
+  btn.disabled = false;
+  btn.textContent = "Ouvrir la position";
+
+  if (created) {
+    msg.textContent = "Position ouverte.";
+    msg.className = "form-msg success";
+    await refreshPositions();
+  } else {
+    msg.textContent = "Erreur lors de l'ouverture de la position.";
+    msg.className = "form-msg error";
+  }
+}
+
+async function refreshPositions() {
+  await refreshPrices();
+  const openEl = document.getElementById("open-positions");
+  const closedEl = document.getElementById("closed-positions");
+
+  const [openTrades, closedTrades] = await Promise.all([
+    getOpenSimulatorTrades(currentUser.id),
+    getClosedSimulatorTrades(currentUser.id, 20),
+  ]);
+
+  if (openTrades.length === 0) {
+    openEl.innerHTML = `<p>Aucune position ouverte.</p>`;
+  } else {
+    openEl.innerHTML = openTrades.map(t => {
+      const inst = instrumentByIdFromSymbol(t.instrument);
+      const currentPrice = latestPrices[t.instrument];
+      const qty = Number(t.quantity);
+      const entry = Number(t.entry_price);
+      let pnlHtml = "—";
+      if (currentPrice) {
+        const pnl = t.side === "buy" ? (currentPrice - entry) * qty : (entry - currentPrice) * qty;
+        pnlHtml = `<span class="${pnl >= 0 ? "pnl-positive" : "pnl-negative"}">${pnl >= 0 ? "+" : ""}${fmt(pnl)} $</span>`;
+      }
+      return `
+        <div class="position-card" data-trade-id="${t.id}">
+          <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div>
+              <strong>${t.instrument}</strong> — ${t.side === "buy" ? "Achat (long)" : "Vente (short)"}<br>
+              <span style="font-size:0.85rem; color:var(--ink-soft);">
+                Entrée : ${fmt(entry, inst?.decimals)} $ · Quantité : ${qty.toFixed(6)}
+              </span>
+            </div>
+            <div style="text-align:right;">
+              <div>P&amp;L non réalisé : ${pnlHtml}</div>
+              <button class="btn btn-outline btn-close-trade" style="margin-top:6px;">Fermer la position</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    document.querySelectorAll(".btn-close-trade").forEach(btn => {
+      btn.addEventListener("click", (e) => handleCloseTrade(e.target.closest(".position-card").getAttribute("data-trade-id")));
+    });
+  }
+
+  if (closedTrades.length === 0) {
+    closedEl.innerHTML = `<p>Aucune position clôturée pour le moment.</p>`;
+  } else {
+    closedEl.innerHTML = closedTrades.map(t => {
+      const qty = Number(t.quantity);
+      const entry = Number(t.entry_price);
+      const exit = Number(t.exit_price);
+      const pnl = t.side === "buy" ? (exit - entry) * qty : (entry - exit) * qty;
+      return `
+        <div class="position-card">
+          <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div>
+              <strong>${t.instrument}</strong> — ${t.side === "buy" ? "Achat (long)" : "Vente (short)"}<br>
+              <span style="font-size:0.85rem; color:var(--ink-soft);">
+                ${fmt(entry)} $ → ${fmt(exit)} $
+              </span>
+            </div>
+            <div class="${pnl >= 0 ? "pnl-positive" : "pnl-negative"}">${pnl >= 0 ? "+" : ""}${fmt(pnl)} $</div>
+          </div>
+          ${t.ai_feedback ? `
+            <div class="feedback-block">
+              ${(t.ai_feedback_good || []).length ? `<div class="feedback-good"><strong>Bien fait :</strong><ul>${t.ai_feedback_good.map(g => `<li>${g}</li>`).join("")}</ul></div>` : ""}
+              ${(t.ai_feedback_bad || []).length ? `<div class="feedback-bad"><strong>À améliorer :</strong><ul>${t.ai_feedback_bad.map(b => `<li>${b}</li>`).join("")}</ul></div>` : ""}
+              ${(t.ai_feedback_lessons || []).length ? `<div class="feedback-lesson"><strong>Leçon à retenir :</strong><ul>${t.ai_feedback_lessons.map(l => `<li>${l}</li>`).join("")}</ul></div>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+async function handleCloseTrade(tradeId) {
+  const openTrades = await getOpenSimulatorTrades(currentUser.id);
+  const trade = openTrades.find(t => t.id === tradeId);
+  if (!trade) return;
+
+  await refreshPrices();
+  const exitPrice = latestPrices[trade.instrument];
+  if (!exitPrice) {
+    alert("Prix indisponible pour clôturer cette position, réessaie dans un instant.");
+    return;
+  }
+
+  const feedback = generateTradeFeedback({
+    side: trade.side,
+    quantity: Number(trade.quantity),
+    entryPrice: Number(trade.entry_price),
+    exitPrice,
+    openedAt: trade.opened_at,
+    closedAt: new Date().toISOString(),
+    balanceBeforeTrade: currentBalance,
+  });
+
+  const updated = await closeSimulatorTrade(tradeId, exitPrice, feedback);
+  if (!updated) {
+    alert("Erreur lors de la clôture de la position.");
+    return;
+  }
+
+  currentBalance += feedback.pnl;
+  await updateSimulatorBalance(currentUser.id, currentBalance);
+  document.getElementById("balance-display").textContent = fmt(currentBalance) + " $";
+
+  await refreshPositions();
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
