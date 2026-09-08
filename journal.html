@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journal de trading — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="padding-top:32px; padding-bottom:80px; max-width:760px;">
+  <h1 style="margin-bottom:4px;">Journal de trading</h1>
+  <p>Note ta justification pour chaque transaction — objectif, signal identifié, risque accepté. Le journal met en évidence les erreurs qui reviennent.</p>
+
+  <div id="journal-shell">
+    <p>Chargement...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("journal-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script journal.");
+}
+
+let currentUser = null;
+let journalableTrades = [];
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function formatDateTime(iso) {
+  return new Date(iso).toLocaleString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function toDatetimeLocalValue(date) {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+(async () => {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+  await renderShell();
+})();
+
+async function renderShell() {
+  const shell = document.getElementById("journal-shell");
+
+  journalableTrades = await getJournalableClosedTrades(currentUser.id);
+
+  shell.innerHTML = `
+    <div id="insights-container"></div>
+
+    <button class="btn btn-primary" id="toggle-new-entry">+ Nouvelle entrée</button>
+
+    <div class="new-post-form" id="new-entry-form">
+      <div class="field">
+        <label for="link-trade">Lier à une position clôturée du simulateur (optionnel)</label>
+        <select class="admin-inline-field" id="link-trade">
+          <option value="">Aucune — saisie libre</option>
+          ${journalableTrades.map(t => `
+            <option value="${t.id}">
+              ${t.instrument} — ${t.side === "buy" ? "Achat" : "Vente"} — clôturée le ${formatDateTime(t.closed_at)}
+            </option>
+          `).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label for="entry-instrument">Instrument</label>
+        <input class="admin-inline-field" id="entry-instrument" placeholder="ex : BTC/USD, EUR/USD, action Acme...">
+      </div>
+      <div class="field">
+        <label for="entry-action">Action</label>
+        <select class="admin-inline-field" id="entry-action">
+          <option value="achat">Achat</option>
+          <option value="vente">Vente</option>
+          <option value="autre">Autre</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="entry-amount">Montant engagé (optionnel)</label>
+        <input type="number" class="admin-inline-field" id="entry-amount" step="0.01">
+      </div>
+      <div class="field">
+        <label for="entry-date">Date</label>
+        <input type="datetime-local" class="admin-inline-field" id="entry-date" value="${toDatetimeLocalValue(new Date())}">
+      </div>
+      <div class="field">
+        <label for="entry-goal">Objectif de la transaction</label>
+        <textarea class="admin-inline-field" id="entry-goal" placeholder="Qu'est-ce que tu cherchais à faire avec ce trade ?"></textarea>
+      </div>
+      <div class="field">
+        <label for="entry-signal">Signal identifié</label>
+        <textarea class="admin-inline-field" id="entry-signal" placeholder="Quel élément d'analyse a motivé cette entrée ?"></textarea>
+      </div>
+      <div class="field">
+        <label for="entry-risk">Risque accepté</label>
+        <textarea class="admin-inline-field" id="entry-risk" placeholder="Combien étais-tu prêt à perdre sur cette transaction ?"></textarea>
+      </div>
+      <div id="entry-msg" class="form-msg"></div>
+      <button class="btn btn-primary" id="submit-entry">Enregistrer l'entrée</button>
+    </div>
+
+    <div id="entries-list" style="margin-top:24px;"><p>Chargement du journal...</p></div>
+  `;
+
+  document.getElementById("toggle-new-entry").addEventListener("click", () => {
+    document.getElementById("new-entry-form").classList.toggle("open");
+  });
+
+  document.getElementById("link-trade").addEventListener("change", (e) => {
+    const tradeId = e.target.value;
+    const trade = journalableTrades.find(t => t.id === tradeId);
+    if (trade) {
+      document.getElementById("entry-instrument").value = trade.instrument;
+      document.getElementById("entry-instrument").disabled = true;
+      document.getElementById("entry-action").value = trade.side === "buy" ? "achat" : "vente";
+      document.getElementById("entry-action").disabled = true;
+      document.getElementById("entry-amount").value = (trade.entry_price * trade.quantity).toFixed(2);
+    } else {
+      document.getElementById("entry-instrument").disabled = false;
+      document.getElementById("entry-action").disabled = false;
+    }
+  });
+
+  document.getElementById("submit-entry").addEventListener("click", handleCreateEntry);
+
+  await loadEntries();
+}
+
+async function handleCreateEntry() {
+  const msg = document.getElementById("entry-msg");
+  const instrument = document.getElementById("entry-instrument").value.trim();
+  const action = document.getElementById("entry-action").value;
+  const amount = document.getElementById("entry-amount").value;
+  const entryDateLocal = document.getElementById("entry-date").value;
+  const goal = document.getElementById("entry-goal").value.trim();
+  const signalIdentified = document.getElementById("entry-signal").value.trim();
+  const riskAccepted = document.getElementById("entry-risk").value.trim();
+  const tradeId = document.getElementById("link-trade").value || null;
+
+  if (!instrument) {
+    msg.textContent = "L'instrument est obligatoire.";
+    msg.className = "form-msg error";
+    return;
+  }
+
+  const btn = document.getElementById("submit-entry");
+  btn.disabled = true;
+  btn.textContent = "Enregistrement...";
+
+  const created = await createJournalEntry(currentUser.id, {
+    tradeId,
+    instrument,
+    action,
+    amount: amount ? Number(amount) : null,
+    goal,
+    signalIdentified,
+    riskAccepted,
+    entryDate: entryDateLocal ? new Date(entryDateLocal).toISOString() : new Date().toISOString(),
+  });
+
+  btn.disabled = false;
+  btn.textContent = "Enregistrer l'entrée";
+
+  if (created) {
+    document.getElementById("new-entry-form").classList.remove("open");
+    document.querySelectorAll("#new-entry-form input, #new-entry-form textarea").forEach(el => { el.value = ""; el.disabled = false; });
+    await renderShell();
+  } else {
+    msg.textContent = "Erreur lors de l'enregistrement de l'entrée.";
+    msg.className = "form-msg error";
+  }
+}
+
+async function loadEntries() {
+  const listEl = document.getElementById("entries-list");
+  const insightsEl = document.getElementById("insights-container");
+  const entries = await getJournalEntries(currentUser.id);
+
+  const { overall, perEntry } = analyzeJournalPatterns(entries);
+
+  if (overall.length > 0) {
+    insightsEl.innerHTML = `
+      <div class="insights-card">
+        <strong>Analyse de tes habitudes</strong>
+        <ul>${overall.map(o => `<li>${escapeHtml(o)}</li>`).join("")}</ul>
+      </div>
+    `;
+  } else {
+    insightsEl.innerHTML = "";
+  }
+
+  // Enregistre les drapeaux calculés sur chaque entrée (best-effort, sans
+  // bloquer l'affichage si l'écriture échoue).
+  entries.forEach(e => {
+    const flags = perEntry.get(e.id) || [];
+    const existing = e.system_flags || [];
+    const changed = flags.length !== existing.length || flags.some((f, i) => f !== existing[i]);
+    if (changed) setJournalEntryFlags(e.id, flags);
+  });
+
+  if (entries.length === 0) {
+    listEl.innerHTML = `<p>Aucune entrée pour le moment. Commence par documenter ta prochaine transaction.</p>`;
+    return;
+  }
+
+  listEl.innerHTML = entries.map(e => {
+    const flags = perEntry.get(e.id) || [];
+    const trade = e.simulator_trades;
+    let pnlHtml = "";
+    if (trade && trade.exit_price != null) {
+      const pnl = trade.side === "buy"
+        ? (trade.exit_price - trade.entry_price) * trade.quantity
+        : (trade.entry_price - trade.exit_price) * trade.quantity;
+      pnlHtml = `<span class="${pnl >= 0 ? "pnl-positive" : "pnl-negative"}">${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} $ (simulateur)</span>`;
+    }
+    return `
+      <div class="journal-entry-card" data-entry-id="${e.id}">
+        <div class="entry-header">
+          <div><strong>${escapeHtml(e.instrument)}</strong> — ${escapeHtml(e.action)}</div>
+          <div>${formatDateTime(e.entry_date)}</div>
+        </div>
+        ${pnlHtml ? `<div class="entry-field">${pnlHtml}</div>` : ""}
+        ${e.amount != null ? `<div class="entry-field"><strong>Montant :</strong> ${Number(e.amount).toFixed(2)} $</div>` : ""}
+        <div class="entry-field"><strong>Objectif :</strong> ${escapeHtml(e.goal) || "<em>non précisé</em>"}</div>
+        <div class="entry-field"><strong>Signal identifié :</strong> ${escapeHtml(e.signal_identified) || "<em>non précisé</em>"}</div>
+        <div class="entry-field"><strong>Risque accepté :</strong> ${escapeHtml(e.risk_accepted) || "<em>non précisé</em>"}</div>
+        ${flags.length ? `<div style="margin-top:8px;">${flags.map(f => `<span class="entry-flag">${escapeHtml(f)}</span>`).join("")}</div>` : ""}
+        <div class="admin-actions" style="margin-top:10px;">
+          <button class="btn btn-outline btn-delete-entry">Supprimer</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  document.querySelectorAll(".btn-delete-entry").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const card = e.target.closest(".journal-entry-card");
+      const entryId = card.getAttribute("data-entry-id");
+      if (!confirm("Supprimer cette entrée du journal ?")) return;
+      const ok = await deleteJournalEntry(entryId);
+      if (ok) await renderShell();
+      else alert("Erreur lors de la suppression.");
+    });
+  });
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
