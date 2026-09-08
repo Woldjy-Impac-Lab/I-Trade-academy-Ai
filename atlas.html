@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="max-width:720px;">
+  <div class="atlas-layout" id="atlas-layout">
+    <p style="padding-top:20px;">Chargement...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("atlas-layout").innerHTML =
+    '<div class="form-msg error" style="display:block; margin-top:20px;">' +
+    'Erreur de chargement : le fichier supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script atlas.");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+let currentUser = null;
+let conversations = [];
+let currentConversationId = null;
+let pendingImageFile = null;
+let pendingImagePreviewUrl = null;
+
+(async () => {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+
+  renderLayout();
+  await loadConversationList();
+
+  if (conversations.length > 0) {
+    await openConversation(conversations[0].id);
+  } else {
+    startNewConversation();
+  }
+})();
+
+function renderLayout() {
+  const layout = document.getElementById("atlas-layout");
+  layout.innerHTML = `
+    <div class="atlas-conv-bar" id="conv-bar"></div>
+    <div class="atlas-messages" id="messages"></div>
+    <div class="atlas-input-bar">
+      <div id="attach-preview"></div>
+      <div class="atlas-input-row">
+        <button class="atlas-attach-btn" id="attach-btn" title="Joindre un graphique">📎</button>
+        <input type="file" id="file-input" accept="image/*" style="display:none;">
+        <textarea id="message-input" placeholder="Pose ta question à Atlas..." rows="1"></textarea>
+        <button class="btn btn-primary" id="send-btn">Envoyer</button>
+      </div>
+      <div id="atlas-msg" class="form-msg" style="margin-top:8px;"></div>
+    </div>
+  `;
+
+  document.getElementById("attach-btn").addEventListener("click", () => {
+    document.getElementById("file-input").click();
+  });
+
+  document.getElementById("file-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    pendingImageFile = file;
+    pendingImagePreviewUrl = URL.createObjectURL(file);
+    document.getElementById("attach-preview").innerHTML = `
+      <div class="atlas-attach-preview">
+        <img src="${pendingImagePreviewUrl}" alt="Aperçu du graphique">
+        <span>${escapeHtml(file.name)}</span>
+        <button class="btn btn-outline" id="remove-attach-btn" style="padding:4px 10px; font-size:0.78rem;">Retirer</button>
+      </div>
+    `;
+    document.getElementById("remove-attach-btn").addEventListener("click", () => {
+      pendingImageFile = null;
+      pendingImagePreviewUrl = null;
+      document.getElementById("attach-preview").innerHTML = "";
+      document.getElementById("file-input").value = "";
+    });
+  });
+
+  document.getElementById("send-btn").addEventListener("click", handleSend);
+  document.getElementById("message-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+}
+
+async function loadConversationList() {
+  conversations = await getAtlasConversations(currentUser.id);
+  const bar = document.getElementById("conv-bar");
+  bar.innerHTML = `
+    <button class="atlas-conv-pill" id="new-conv-btn">+ Nouvelle</button>
+    ${conversations.map((c, i) => `
+      <button class="atlas-conv-pill ${c.id === currentConversationId ? "active" : ""}" data-conv-id="${c.id}">
+        Conversation ${conversations.length - i}
+      </button>
+    `).join("")}
+  `;
+  document.getElementById("new-conv-btn").addEventListener("click", startNewConversation);
+  bar.querySelectorAll("[data-conv-id]").forEach(btn => {
+    btn.addEventListener("click", () => openConversation(btn.getAttribute("data-conv-id")));
+  });
+}
+
+function startNewConversation() {
+  currentConversationId = null;
+  document.getElementById("messages").innerHTML = `
+    <div class="atlas-bubble assistant">
+      Salut, je suis Atlas 👋 Pose-moi une question sur une notion vue dans un cours, ou montre-moi un graphique — je t'aide à comprendre le contexte et la méthode, mais je ne te dirai jamais quoi acheter ou vendre.
+    </div>
+  `;
+  document.querySelectorAll(".atlas-conv-pill").forEach(p => p.classList.remove("active"));
+  const newBtn = document.getElementById("new-conv-btn");
+  if (newBtn) newBtn.classList.add("active");
+}
+
+async function openConversation(conversationId) {
+  currentConversationId = conversationId;
+  document.querySelectorAll(".atlas-conv-pill[data-conv-id]").forEach(p => {
+    p.classList.toggle("active", p.getAttribute("data-conv-id") === conversationId);
+  });
+  const messagesEl = document.getElementById("messages");
+  messagesEl.innerHTML = `<p>Chargement...</p>`;
+  const messages = await getAtlasMessages(conversationId);
+  renderMessages(messages);
+}
+
+function renderMessages(messages) {
+  const messagesEl = document.getElementById("messages");
+  messagesEl.innerHTML = messages.map(m => `
+    <div class="atlas-bubble ${m.role}">
+      ${escapeHtml(m.content)}
+      ${m.chart_image_url ? `<img src="${m.chart_image_url}" alt="Graphique joint">` : ""}
+    </div>
+  `).join("");
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function handleSend() {
+  const input = document.getElementById("message-input");
+  const msgEl = document.getElementById("atlas-msg");
+  const text = input.value.trim();
+  if (!text) return;
+
+  const sendBtn = document.getElementById("send-btn");
+  sendBtn.disabled = true;
+  input.disabled = true;
+  msgEl.textContent = "";
+  msgEl.className = "form-msg";
+
+  const messagesEl = document.getElementById("messages");
+
+  let imageUrl = null;
+  if (pendingImageFile) {
+    imageUrl = await uploadChartImage(currentUser.id, pendingImageFile);
+    if (!imageUrl) {
+      msgEl.textContent = "Erreur lors de l'envoi de l'image. Vérifie que le bucket \"chart-images\" est bien configuré (supabase/storage-setup.sql).";
+      msgEl.className = "form-msg error";
+      sendBtn.disabled = false;
+      input.disabled = false;
+      return;
+    }
+  }
+
+  // Affichage optimiste du message utilisateur.
+  messagesEl.insertAdjacentHTML("beforeend", `
+    <div class="atlas-bubble user">
+      ${escapeHtml(text)}
+      ${imageUrl ? `<img src="${imageUrl}" alt="Graphique joint">` : ""}
+    </div>
+    <div class="atlas-bubble assistant thinking" id="thinking-bubble">Atlas réfléchit...</div>
+  `);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  input.value = "";
+  pendingImageFile = null;
+  pendingImagePreviewUrl = null;
+  document.getElementById("attach-preview").innerHTML = "";
+  document.getElementById("file-input").value = "";
+
+  const result = await sendAtlasMessage(currentConversationId, text, imageUrl);
+
+  const thinkingBubble = document.getElementById("thinking-bubble");
+
+  sendBtn.disabled = false;
+  input.disabled = false;
+  input.focus();
+
+  if (result.error) {
+    if (thinkingBubble) thinkingBubble.remove();
+    msgEl.textContent = "Atlas n'est pas encore configuré sur ce projet (fonction serveur \"atlas-chat\" non déployée, ou clé API manquante). Voir supabase/functions/README.md.";
+    msgEl.className = "form-msg error";
+    return;
+  }
+
+  if (!currentConversationId) {
+    currentConversationId = result.conversationId;
+    await loadConversationList();
+  }
+
+  if (thinkingBubble) {
+    thinkingBubble.classList.remove("thinking");
+    thinkingBubble.textContent = result.reply;
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
