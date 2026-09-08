@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Certificats — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="dashboard.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="dashboard.html">← Mes cours</a></li>
+      <li><a href="#" id="logout-link">Déconnexion</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container" style="padding-top:32px; padding-bottom:80px; max-width:720px;">
+  <h1 style="margin-bottom:4px;">Mes certificats</h1>
+  <p>Un certificat est délivré pour chaque niveau terminé (toutes les leçons + les deux quiz réussis à 75% minimum).</p>
+
+  <div id="cert-shell">
+    <p>Chargement...</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof requireAuth !== "function") {
+  document.getElementById("cert-shell").innerHTML =
+    '<div class="form-msg error" style="display:block;">' +
+    'Erreur de chargement : le fichier supabase-client.js n\'a pas pu être chargé.' +
+    '</div>';
+  throw new Error("supabase-client.js non chargé — arrêt du script certificates.");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
+}
+
+let learnerName = "";
+
+(async () => {
+  const user = await requireAuth();
+  if (!user) return;
+
+  const profile = await getCurrentProfile();
+  learnerName = profile?.full_name || user.email;
+
+  const shell = document.getElementById("cert-shell");
+  const certificates = await getUserCertificates(user.id);
+
+  if (certificates.length === 0) {
+    shell.innerHTML = `
+      <p>Tu n'as pas encore de certificat. Termine toutes les leçons et les deux quiz (75% minimum) d'un niveau pour en obtenir un automatiquement.</p>
+      <a href="dashboard.html" class="btn btn-primary">← Retour au tableau de bord</a>
+    `;
+    return;
+  }
+
+  shell.innerHTML = `
+    <div id="cert-list">
+      ${certificates.map(c => `
+        <div class="cert-list-card">
+          <div>
+            <strong>Niveau ${escapeHtml(c.levels?.name || c.level_id)}</strong><br>
+            <span style="font-size:0.85rem; color:var(--ink-soft);">Délivré le ${formatDate(c.issued_at)}</span><br>
+            <span class="cert-uid">${escapeHtml(c.certificate_uid)}</span>
+          </div>
+          <button class="btn btn-outline btn-view-cert" data-cert-id="${c.id}">Voir le certificat</button>
+        </div>
+      `).join("")}
+    </div>
+    <div id="cert-detail" style="margin-top:32px;"></div>
+  `;
+
+  document.querySelectorAll(".btn-view-cert").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const cert = certificates.find(c => c.id === e.target.getAttribute("data-cert-id"));
+      renderCertificate(cert);
+    });
+  });
+})();
+
+function renderCertificate(cert) {
+  const detail = document.getElementById("cert-detail");
+  detail.innerHTML = `
+    <div class="certificate-frame">
+      <div class="certificate-eyebrow">I Trade Academy AI</div>
+      <div style="margin-top:10px; font-size:0.95rem; color:var(--ink-soft);">Certifie que</div>
+      <div class="certificate-name">${escapeHtml(learnerName)}</div>
+      <div style="font-size:0.95rem; color:var(--ink-soft);">a terminé avec succès le niveau</div>
+      <div class="certificate-level">${escapeHtml(cert.levels?.name || cert.level_id)}</div>
+      <div class="certificate-meta">
+        Délivré le ${formatDate(cert.issued_at)}<br>
+        Identifiant du certificat : ${escapeHtml(cert.certificate_uid)}
+      </div>
+    </div>
+    <div style="text-align:center;" class="no-print">
+      <button class="btn btn-primary" id="print-cert-btn">Imprimer / Enregistrer en PDF</button>
+    </div>
+  `;
+  document.getElementById("print-cert-btn").addEventListener("click", () => window.print());
+  detail.scrollIntoView({ behavior: "smooth" });
+}
+
+document.getElementById("logout-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  signOut();
+});
+</script>
+
+</body>
+</html>
