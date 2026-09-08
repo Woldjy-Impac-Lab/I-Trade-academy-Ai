@@ -33,7 +33,7 @@
 if (typeof requireAuth !== "function") {
   document.getElementById("sim-shell").innerHTML =
     '<div class="form-msg error" style="display:block;">' +
-    'Erreur de chargement : le fichier js/supabase-client.js n\'a pas pu être chargé.' +
+    'Erreur de chargement : le fichier supabase-client.js n\'a pas pu être chargé.' +
     '</div>';
   throw new Error("supabase-client.js non chargé — arrêt du script simulator.");
 }
