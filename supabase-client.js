@@ -913,11 +913,7 @@ function generateTradeFeedback({ side, quantity, entryPrice, exitPrice, openedAt
 async function getJournalEntries(userId) {
   const { data, error } = await supabase
     .from("trading_journal_entries")
-    .select(`
-      id, instrument, action, amount, goal, signal_identified, risk_accepted,
-      entry_date, system_flags, trade_id,
-      simulator_trades ( id, instrument, side, quantity, entry_price, exit_price, closed_at )
-    `)
+    .select("*, simulator_trades ( side, entry_price, exit_price, quantity )")
     .eq("user_id", userId)
     .order("entry_date", { ascending: false });
   if (error) {
@@ -925,29 +921,6 @@ async function getJournalEntries(userId) {
     return [];
   }
   return data;
-}
-
-// Trades clôturés du simulateur qui n'ont pas encore d'entrée de journal liée.
-async function getJournalableClosedTrades(userId) {
-  const [{ data: trades, error: tradesError }, { data: journaled, error: journaledError }] = await Promise.all([
-    supabase
-      .from("simulator_trades")
-      .select("id, instrument, side, quantity, entry_price, exit_price, closed_at")
-      .eq("user_id", userId)
-      .not("closed_at", "is", null)
-      .order("closed_at", { ascending: false }),
-    supabase
-      .from("trading_journal_entries")
-      .select("trade_id")
-      .eq("user_id", userId)
-      .not("trade_id", "is", null),
-  ]);
-  if (tradesError) {
-    console.error("Erreur lors du chargement des trades :", tradesError);
-    return [];
-  }
-  const journaledIds = new Set((journaled || []).map(j => j.trade_id));
-  return (trades || []).filter(t => !journaledIds.has(t.id));
 }
 
 async function createJournalEntry(userId, entry) {
@@ -967,25 +940,10 @@ async function createJournalEntry(userId, entry) {
     .select()
     .single();
   if (error) {
-    console.error("Erreur lors de la création de l'entrée de journal :", error);
+    console.error("Erreur lors de l'enregistrement de l'entrée de journal :", error);
     return null;
   }
   return data;
-}
-
-async function updateJournalEntry(entryId, entry) {
-  const { error } = await supabase
-    .from("trading_journal_entries")
-    .update({
-      instrument: entry.instrument,
-      action: entry.action,
-      amount: entry.amount || null,
-      goal: entry.goal || null,
-      signal_identified: entry.signalIdentified || null,
-      risk_accepted: entry.riskAccepted || null,
-    })
-    .eq("id", entryId);
-  return !error;
 }
 
 async function deleteJournalEntry(entryId) {
@@ -993,6 +951,8 @@ async function deleteJournalEntry(entryId) {
   return !error;
 }
 
+// Enregistre les drapeaux calculés pour une entrée (colonne system_flags),
+// pour qu'ils restent visibles sans avoir à relancer l'analyse à chaque fois.
 async function setJournalEntryFlags(entryId, flags) {
   const { error } = await supabase
     .from("trading_journal_entries")
@@ -1001,57 +961,108 @@ async function setJournalEntryFlags(entryId, flags) {
   return !error;
 }
 
-// Analyse par règles simples des habitudes de l'utilisateur à partir de son
-// journal (aucun appel IA externe). Retourne :
-//  - overall : liste de messages d'ensemble (à afficher en tête de page)
-//  - perEntry : Map(entryId -> string[]) des drapeaux propres à chaque entrée
+// Positions clôturées du simulateur qui n'ont pas encore d'entrée de journal
+// associée — pour proposer de préremplir une nouvelle entrée à partir d'une
+// transaction réellement exécutée sur le simulateur.
+async function getJournalableClosedTrades(userId) {
+  const [trades, entries] = await Promise.all([
+    getClosedSimulatorTrades(userId, 50),
+    getJournalEntries(userId),
+  ]);
+  const journaledTradeIds = new Set(entries.map(e => e.trade_id).filter(Boolean));
+  return trades.filter(t => !journaledTradeIds.has(t.id));
+}
+
+// Calcule le P&L réalisé d'une position clôturée du simulateur (même formule
+// que dans simulator.html).
+function computeTradePnl(trade) {
+  const qty = Number(trade.quantity);
+  const entry = Number(trade.entry_price);
+  const exit = Number(trade.exit_price);
+  return trade.side === "buy" ? (exit - entry) * qty : (entry - exit) * qty;
+}
+
+// Analyse par règles (pas d'IA) des entrées du journal — exactement ce que la
+// leçon "Le journal comme outil de développement personnel" du niveau
+// Professionnel recommande de faire soi-même, mais automatisé. Retourne des
+// messages agrégés (overall) et des drapeaux propres à chaque entrée
+// (perEntry, une Map id -> string[]) enregistrés ensuite dans system_flags.
 function analyzeJournalPatterns(entries) {
-  const overall = [];
-  const perEntry = new Map();
   const total = entries.length;
-  if (total === 0) return { overall, perEntry };
+  const perEntry = new Map();
+  if (total === 0) return { overall: [], perEntry };
 
-  entries.forEach(e => perEntry.set(e.id, []));
-
-  const missingGoal = entries.filter(e => !e.goal || !e.goal.trim());
-  const missingSignal = entries.filter(e => !e.signal_identified || !e.signal_identified.trim());
-  const missingRisk = entries.filter(e => !e.risk_accepted || !e.risk_accepted.trim());
-
-  missingGoal.forEach(e => perEntry.get(e.id).push("Objectif non précisé"));
-  missingSignal.forEach(e => perEntry.get(e.id).push("Signal non précisé"));
-  missingRisk.forEach(e => perEntry.get(e.id).push("Risque accepté non précisé"));
-
-  if (missingGoal.length / total >= 0.3) {
-    overall.push(`L'objectif n'est pas renseigné dans ${missingGoal.length} entrée(s) sur ${total}. Noter l'objectif avant chaque transaction aide à distinguer une décision réfléchie d'une improvisation.`);
-  }
-  if (missingSignal.length / total >= 0.3) {
-    overall.push(`Le signal identifié manque dans ${missingSignal.length} entrée(s) sur ${total}. Sans signal noté, il est difficile de savoir plus tard si une entrée répondait à une méthode ou à une impulsion.`);
-  }
-  if (missingRisk.length / total >= 0.3) {
-    overall.push(`Le risque accepté n'est pas précisé dans ${missingRisk.length} entrée(s) sur ${total}. C'est justement l'information la plus utile pour repérer une prise de risque disproportionnée.`);
-  }
-
-  // Concentration des pertes par instrument, pour les entrées liées à un trade clôturé du simulateur.
-  const lossCountByInstrument = {};
-  const entryIdsByLossInstrument = {};
   entries.forEach(e => {
-    const t = e.simulator_trades;
-    if (t && t.exit_price != null) {
-      const pnl = t.side === "buy"
-        ? (t.exit_price - t.entry_price) * t.quantity
-        : (t.entry_price - t.exit_price) * t.quantity;
-      if (pnl < 0) {
-        lossCountByInstrument[e.instrument] = (lossCountByInstrument[e.instrument] || 0) + 1;
-        (entryIdsByLossInstrument[e.instrument] ||= []).push(e.id);
+    const flags = [];
+    if (!e.risk_accepted || !e.risk_accepted.trim()) flags.push("Risque non précisé");
+    if (!e.goal || !e.goal.trim()) flags.push("Objectif non précisé");
+    if (!e.signal_identified || !e.signal_identified.trim()) flags.push("Signal non précisé");
+    if (e.simulator_trades && e.simulator_trades.exit_price != null) {
+      const pnl = computeTradePnl(e.simulator_trades);
+      if (pnl < 0 && (!e.risk_accepted || !e.risk_accepted.trim())) {
+        flags.push("Perte sans risque défini à l'avance");
       }
     }
-  });
-  Object.entries(lossCountByInstrument).forEach(([instrument, count]) => {
-    if (count >= 3) {
-      overall.push(`${count} transactions liées à ${instrument} se sont soldées par une perte. Vérifie si ta méthode est réellement adaptée à cet instrument, ou si le contexte a changé.`);
-      entryIdsByLossInstrument[instrument].forEach(id => perEntry.get(id).push(`Perte répétée sur ${instrument}`));
-    }
+    perEntry.set(e.id, flags);
   });
 
+  const missingRisk = entries.filter(e => !e.risk_accepted || !e.risk_accepted.trim()).length;
+  const missingGoal = entries.filter(e => !e.goal || !e.goal.trim()).length;
+  const missingSignal = entries.filter(e => !e.signal_identified || !e.signal_identified.trim()).length;
+
+  const byInstrument = {};
+  entries.forEach(e => { byInstrument[e.instrument] = (byInstrument[e.instrument] || 0) + 1; });
+  const sortedInstruments = Object.entries(byInstrument).sort((a, b) => b[1] - a[1]);
+
+  const overall = [];
+
+  if (total >= 3 && missingRisk / total >= 0.5) {
+    overall.push(`Le risque accepté n'est noté que dans ${total - missingRisk} entrée(s) sur ${total} — une habitude à corriger : documente-le systématiquement avant chaque transaction.`);
+  }
+  if (total >= 3 && missingSignal / total >= 0.5) {
+    overall.push(`Le signal identifié manque dans plus de la moitié des entrées — cela peut indiquer des transactions prises sans critère clair et vérifiable.`);
+  }
+  if (total >= 3 && missingGoal / total >= 0.5) {
+    overall.push(`L'objectif n'est souvent pas noté avant la transaction — se fixer un objectif à l'avance aide à évaluer la décision après coup, indépendamment du résultat.`);
+  }
+  if (sortedInstruments.length && sortedInstruments[0][1] >= 3 && sortedInstruments[0][1] / total >= 0.6) {
+    overall.push(`${Math.round((sortedInstruments[0][1] / total) * 100)}% des entrées portent sur ${sortedInstruments[0][0]} — vérifie que ce n'est pas une zone de confort qui limite la diversification de ta pratique.`);
+  }
+
+  // Croise les entrées liées à une position clôturée avec son résultat réel,
+  // pour comparer le taux de perte selon que le risque accepté était noté ou non.
+  const withTrade = entries
+    .filter(e => e.simulator_trades && e.simulator_trades.exit_price != null)
+    .map(e => ({ entry: e, pnl: computeTradePnl(e.simulator_trades) }));
+
+  const withRisk = withTrade.filter(x => x.entry.risk_accepted && x.entry.risk_accepted.trim());
+  const withoutRisk = withTrade.filter(x => !x.entry.risk_accepted || !x.entry.risk_accepted.trim());
+
+  if (withRisk.length >= 3 && withoutRisk.length >= 3) {
+    const lossRate = (arr) => Math.round((arr.filter(x => x.pnl < 0).length / arr.length) * 100);
+    const lossWithRisk = lossRate(withRisk);
+    const lossWithoutRisk = lossRate(withoutRisk);
+    if (lossWithoutRisk - lossWithRisk >= 15) {
+      overall.push(`Sur les transactions liées au simulateur : ${lossWithoutRisk}% se soldent en perte quand le risque accepté n'était pas noté, contre ${lossWithRisk}% quand il l'était — un signe assez net que documenter le risque à l'avance améliore tes décisions.`);
+    }
+  }
+
   return { overall, perEntry };
+}
+
+// ----------------------------------------------------------------------------
+// Certificats (vue étudiant)
+// ----------------------------------------------------------------------------
+
+async function getUserCertificates(userId) {
+  const { data, error } = await supabase
+    .from("certificates")
+    .select("id, certificate_uid, issued_at, level_id, levels ( name, order_index )")
+    .eq("user_id", userId)
+    .order("issued_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des certificats :", error);
+    return [];
+  }
+  return data;
 }
