@@ -732,119 +732,326 @@ async function deleteCommunityComment(commentId) {
 }
 
 // ----------------------------------------------------------------------------
-// Communauté
+// Simulateur de trading
 // ----------------------------------------------------------------------------
 
-// Filtre de modération automatique très simple, côté client : une liste de
-// mots-clés interdits. Pour une modération automatique sérieuse, remplacer
-// par un appel à une Edge Function utilisant une vraie API de modération de
-// contenu (voir le modèle des fonctions de paiement dans supabase/functions/).
-const COMMUNITY_FORBIDDEN_WORDS = [
-  "arnaque garantie", "gain garanti à 100", "signal payant", "pyramide financière"
-];
-
-function containsForbiddenContent(text) {
-  const lower = (text || "").toLowerCase();
-  return COMMUNITY_FORBIDDEN_WORDS.some(word => lower.includes(word));
-}
-
-async function getCommunityCategories() {
+// Le simulateur se débloque quand le niveau Intermédiaire est terminé —
+// l'existence d'un certificat pour ce niveau en est la preuve la plus directe.
+async function getUserCertificateForLevel(userId, levelId) {
   const { data, error } = await supabase
-    .from("community_categories")
-    .select("id, name");
+    .from("certificates")
+    .select("id, certificate_uid, issued_at")
+    .eq("user_id", userId)
+    .eq("level_id", levelId)
+    .maybeSingle();
   if (error) {
-    console.error("Erreur lors du chargement des catégories :", error);
-    return [];
-  }
-  return data;
-}
-
-async function getCommunityPosts(categoryId) {
-  let query = supabase
-    .from("community_posts")
-    .select("id, title, content, is_hidden, created_at, user_id, category_id, profiles ( email, full_name ), community_categories ( name )")
-    .order("created_at", { ascending: false });
-  if (categoryId) query = query.eq("category_id", categoryId);
-  const { data, error } = await query;
-  if (error) {
-    console.error("Erreur lors du chargement des sujets :", error);
-    return [];
-  }
-  return data;
-}
-
-async function getPostDetail(postId) {
-  const { data, error } = await supabase
-    .from("community_posts")
-    .select("id, title, content, is_hidden, created_at, user_id, category_id, profiles ( email, full_name ), community_categories ( name )")
-    .eq("id", postId)
-    .single();
-  if (error) {
-    console.error("Erreur lors du chargement du sujet :", error);
+    console.error("Erreur lors de la vérification du certificat :", error);
     return null;
   }
   return data;
 }
 
-async function getPostComments(postId) {
+// Crée le compte simulateur (solde de départ) s'il n'existe pas encore.
+async function ensureSimulatorAccount(userId) {
+  const { data: existing, error: fetchError } = await supabase
+    .from("simulator_accounts")
+    .select("user_id, virtual_balance, created_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (fetchError) {
+    console.error("Erreur lors du chargement du compte simulateur :", fetchError);
+    return null;
+  }
+  if (existing) return existing;
+
+  const { data: created, error: insertError } = await supabase
+    .from("simulator_accounts")
+    .insert({ user_id: userId })
+    .select()
+    .single();
+  if (insertError) {
+    console.error("Erreur lors de la création du compte simulateur :", insertError);
+    return null;
+  }
+  return created;
+}
+
+async function updateSimulatorBalance(userId, newBalance) {
+  const { error } = await supabase
+    .from("simulator_accounts")
+    .update({ virtual_balance: newBalance })
+    .eq("user_id", userId);
+  return !error;
+}
+
+async function resetSimulatorBalance(userId) {
+  return updateSimulatorBalance(userId, 100000.0);
+}
+
+async function getOpenSimulatorTrades(userId) {
   const { data, error } = await supabase
-    .from("community_comments")
-    .select("id, content, is_hidden, created_at, user_id, profiles ( email, full_name )")
-    .eq("post_id", postId)
-    .order("created_at", { ascending: true });
+    .from("simulator_trades")
+    .select("*")
+    .eq("user_id", userId)
+    .is("closed_at", null)
+    .order("opened_at", { ascending: false });
   if (error) {
-    console.error("Erreur lors du chargement des commentaires :", error);
+    console.error("Erreur lors du chargement des positions ouvertes :", error);
     return [];
   }
   return data;
 }
 
-// Retourne { post, flagged } — flagged indique si le filtre de modération
-// automatique a mis le sujet en attente (is_hidden = true) à la création.
-async function createCommunityPost(userId, categoryId, title, content) {
-  const flagged = containsForbiddenContent(title) || containsForbiddenContent(content);
+async function getClosedSimulatorTrades(userId, limitCount) {
   const { data, error } = await supabase
-    .from("community_posts")
-    .insert({ user_id: userId, category_id: categoryId, title, content, is_hidden: flagged })
+    .from("simulator_trades")
+    .select("*")
+    .eq("user_id", userId)
+    .not("closed_at", "is", null)
+    .order("closed_at", { ascending: false })
+    .limit(limitCount || 20);
+  if (error) {
+    console.error("Erreur lors du chargement de l'historique :", error);
+    return [];
+  }
+  return data;
+}
+
+async function openSimulatorTrade(userId, instrument, side, quantity, entryPrice) {
+  const { data, error } = await supabase
+    .from("simulator_trades")
+    .insert({
+      user_id: userId,
+      instrument,
+      side,
+      quantity,
+      entry_price: entryPrice,
+    })
     .select()
     .single();
   if (error) {
-    console.error("Erreur lors de la création du sujet :", error);
-    return { post: null, flagged: false, error };
+    console.error("Erreur lors de l'ouverture de la position :", error);
+    return null;
   }
-  return { post: data, flagged };
+  return data;
 }
 
-async function createComment(postId, userId, content) {
-  const flagged = containsForbiddenContent(content);
+async function closeSimulatorTrade(tradeId, exitPrice, feedback) {
   const { data, error } = await supabase
-    .from("community_comments")
-    .insert({ post_id: postId, user_id: userId, content, is_hidden: flagged })
+    .from("simulator_trades")
+    .update({
+      exit_price: exitPrice,
+      closed_at: new Date().toISOString(),
+      ai_feedback: feedback.summary,
+      ai_feedback_good: feedback.good,
+      ai_feedback_bad: feedback.bad,
+      ai_feedback_lessons: feedback.lessons,
+    })
+    .eq("id", tradeId)
     .select()
     .single();
   if (error) {
-    console.error("Erreur lors de la publication du commentaire :", error);
-    return { comment: null, flagged: false, error };
+    console.error("Erreur lors de la clôture de la position :", error);
+    return null;
   }
-  return { comment: data, flagged };
+  return data;
 }
 
-// Bascule la visibilité (masquer/afficher) — auteur ou admin selon les
-// policies RLS "community_posts_update" / "community_comments_update".
-async function setPostHidden(postId, hidden) {
-  const { error } = await supabase.from("community_posts").update({ is_hidden: hidden }).eq("id", postId);
+// Génère un retour d'expérience pédagogique par règles (pas d'appel IA
+// externe dans cette version) à partir des paramètres du trade fermé.
+// Retourne { summary, good: [...], bad: [...], lessons: [...] }.
+function generateTradeFeedback({ side, quantity, entryPrice, exitPrice, openedAt, closedAt, balanceBeforeTrade }) {
+  const pnl = side === "buy" ? (exitPrice - entryPrice) * quantity : (entryPrice - exitPrice) * quantity;
+  const positionValue = entryPrice * quantity;
+  const positionPercentOfBalance = balanceBeforeTrade > 0 ? (positionValue / balanceBeforeTrade) * 100 : 0;
+  const pnlPercentOfBalance = balanceBeforeTrade > 0 ? (pnl / balanceBeforeTrade) * 100 : 0;
+  const durationMinutes = (new Date(closedAt) - new Date(openedAt)) / 60000;
+
+  const good = [];
+  const bad = [];
+  const lessons = [];
+
+  if (positionPercentOfBalance <= 10) {
+    good.push(`Taille de position raisonnable : environ ${positionPercentOfBalance.toFixed(1)}% du solde engagés sur ce trade.`);
+  } else if (positionPercentOfBalance <= 25) {
+    bad.push(`Position représentant ${positionPercentOfBalance.toFixed(1)}% du solde — plus élevée que ce qui est généralement recommandé pour un seul trade.`);
+    lessons.push("Revois le calcul de taille de position vu au niveau Intermédiaire : la taille devrait découler du risque accepté, pas l'inverse.");
+  } else {
+    bad.push(`Position très importante : ${positionPercentOfBalance.toFixed(1)}% du solde exposés sur une seule transaction.`);
+    lessons.push("Une position aussi large expose le compte à une perte disproportionnée en cas de mouvement défavorable, même modéré.");
+  }
+
+  if (pnl > 0) {
+    good.push(`Trade clôturé en gain de +${pnl.toFixed(2)} $ (+${pnlPercentOfBalance.toFixed(2)}% du solde).`);
+  } else if (pnl < 0) {
+    bad.push(`Trade clôturé en perte de ${pnl.toFixed(2)} $ (${pnlPercentOfBalance.toFixed(2)}% du solde).`);
+    if (Math.abs(pnlPercentOfBalance) > 5) {
+      lessons.push("Cette perte dépasse largement la règle des 1-2% de risque par transaction — une taille de position plus petite l'aurait limitée.");
+    }
+  } else {
+    good.push("Trade clôturé à l'équilibre, sans gain ni perte.");
+  }
+
+  if (durationMinutes < 2) {
+    bad.push("Position fermée en moins de 2 minutes.");
+    lessons.push("Une sortie très rapide mérite d'être vérifiée : répondait-elle à un critère défini à l'avance, ou à une réaction impulsive au mouvement du prix ?");
+  }
+
+  lessons.push("Compare ce trade à ton journal : la justification (objectif, signal identifié, risque accepté) avait-elle été notée avant l'ouverture de la position ?");
+
+  const summary = pnl >= 0
+    ? `Trade gagnant de ${pnl.toFixed(2)} $. ${good[0] || ""}`
+    : `Trade perdant de ${Math.abs(pnl).toFixed(2)} $. ${bad[0] || ""}`;
+
+  return { summary, good, bad, lessons, pnl };
+}
+
+// ----------------------------------------------------------------------------
+// Journal de trading
+// ----------------------------------------------------------------------------
+
+async function getJournalEntries(userId) {
+  const { data, error } = await supabase
+    .from("trading_journal_entries")
+    .select(`
+      id, instrument, action, amount, goal, signal_identified, risk_accepted,
+      entry_date, system_flags, trade_id,
+      simulator_trades ( id, instrument, side, quantity, entry_price, exit_price, closed_at )
+    `)
+    .eq("user_id", userId)
+    .order("entry_date", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement du journal :", error);
+    return [];
+  }
+  return data;
+}
+
+// Trades clôturés du simulateur qui n'ont pas encore d'entrée de journal liée.
+async function getJournalableClosedTrades(userId) {
+  const [{ data: trades, error: tradesError }, { data: journaled, error: journaledError }] = await Promise.all([
+    supabase
+      .from("simulator_trades")
+      .select("id, instrument, side, quantity, entry_price, exit_price, closed_at")
+      .eq("user_id", userId)
+      .not("closed_at", "is", null)
+      .order("closed_at", { ascending: false }),
+    supabase
+      .from("trading_journal_entries")
+      .select("trade_id")
+      .eq("user_id", userId)
+      .not("trade_id", "is", null),
+  ]);
+  if (tradesError) {
+    console.error("Erreur lors du chargement des trades :", tradesError);
+    return [];
+  }
+  const journaledIds = new Set((journaled || []).map(j => j.trade_id));
+  return (trades || []).filter(t => !journaledIds.has(t.id));
+}
+
+async function createJournalEntry(userId, entry) {
+  const { data, error } = await supabase
+    .from("trading_journal_entries")
+    .insert({
+      user_id: userId,
+      trade_id: entry.tradeId || null,
+      instrument: entry.instrument,
+      action: entry.action,
+      amount: entry.amount || null,
+      goal: entry.goal || null,
+      signal_identified: entry.signalIdentified || null,
+      risk_accepted: entry.riskAccepted || null,
+      entry_date: entry.entryDate || new Date().toISOString(),
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de la création de l'entrée de journal :", error);
+    return null;
+  }
+  return data;
+}
+
+async function updateJournalEntry(entryId, entry) {
+  const { error } = await supabase
+    .from("trading_journal_entries")
+    .update({
+      instrument: entry.instrument,
+      action: entry.action,
+      amount: entry.amount || null,
+      goal: entry.goal || null,
+      signal_identified: entry.signalIdentified || null,
+      risk_accepted: entry.riskAccepted || null,
+    })
+    .eq("id", entryId);
   return !error;
 }
 
-async function setCommentHidden(commentId, hidden) {
-  const { error } = await supabase.from("community_comments").update({ is_hidden: hidden }).eq("id", commentId);
+async function deleteJournalEntry(entryId) {
+  const { error } = await supabase.from("trading_journal_entries").delete().eq("id", entryId);
   return !error;
 }
 
-// Suppression définitive d'un sujet (auteur ou admin uniquement, voir policy
-// "community_posts_delete"). Les commentaires n'ont pas de policy de
-// suppression : on ne peut que les masquer, jamais les effacer définitivement.
-async function deleteCommunityPost(postId) {
-  const { error } = await supabase.from("community_posts").delete().eq("id", postId);
+async function setJournalEntryFlags(entryId, flags) {
+  const { error } = await supabase
+    .from("trading_journal_entries")
+    .update({ system_flags: flags })
+    .eq("id", entryId);
   return !error;
+}
+
+// Analyse par règles simples des habitudes de l'utilisateur à partir de son
+// journal (aucun appel IA externe). Retourne :
+//  - overall : liste de messages d'ensemble (à afficher en tête de page)
+//  - perEntry : Map(entryId -> string[]) des drapeaux propres à chaque entrée
+function analyzeJournalPatterns(entries) {
+  const overall = [];
+  const perEntry = new Map();
+  const total = entries.length;
+  if (total === 0) return { overall, perEntry };
+
+  entries.forEach(e => perEntry.set(e.id, []));
+
+  const missingGoal = entries.filter(e => !e.goal || !e.goal.trim());
+  const missingSignal = entries.filter(e => !e.signal_identified || !e.signal_identified.trim());
+  const missingRisk = entries.filter(e => !e.risk_accepted || !e.risk_accepted.trim());
+
+  missingGoal.forEach(e => perEntry.get(e.id).push("Objectif non précisé"));
+  missingSignal.forEach(e => perEntry.get(e.id).push("Signal non précisé"));
+  missingRisk.forEach(e => perEntry.get(e.id).push("Risque accepté non précisé"));
+
+  if (missingGoal.length / total >= 0.3) {
+    overall.push(`L'objectif n'est pas renseigné dans ${missingGoal.length} entrée(s) sur ${total}. Noter l'objectif avant chaque transaction aide à distinguer une décision réfléchie d'une improvisation.`);
+  }
+  if (missingSignal.length / total >= 0.3) {
+    overall.push(`Le signal identifié manque dans ${missingSignal.length} entrée(s) sur ${total}. Sans signal noté, il est difficile de savoir plus tard si une entrée répondait à une méthode ou à une impulsion.`);
+  }
+  if (missingRisk.length / total >= 0.3) {
+    overall.push(`Le risque accepté n'est pas précisé dans ${missingRisk.length} entrée(s) sur ${total}. C'est justement l'information la plus utile pour repérer une prise de risque disproportionnée.`);
+  }
+
+  // Concentration des pertes par instrument, pour les entrées liées à un trade clôturé du simulateur.
+  const lossCountByInstrument = {};
+  const entryIdsByLossInstrument = {};
+  entries.forEach(e => {
+    const t = e.simulator_trades;
+    if (t && t.exit_price != null) {
+      const pnl = t.side === "buy"
+        ? (t.exit_price - t.entry_price) * t.quantity
+        : (t.entry_price - t.exit_price) * t.quantity;
+      if (pnl < 0) {
+        lossCountByInstrument[e.instrument] = (lossCountByInstrument[e.instrument] || 0) + 1;
+        (entryIdsByLossInstrument[e.instrument] ||= []).push(e.id);
+      }
+    }
+  });
+  Object.entries(lossCountByInstrument).forEach(([instrument, count]) => {
+    if (count >= 3) {
+      overall.push(`${count} transactions liées à ${instrument} se sont soldées par une perte. Vérifie si ta méthode est réellement adaptée à cet instrument, ou si le contexte a changé.`);
+      entryIdsByLossInstrument[instrument].forEach(id => perEntry.get(id).push(`Perte répétée sur ${instrument}`));
+    }
+  });
+
+  return { overall, perEntry };
 }
