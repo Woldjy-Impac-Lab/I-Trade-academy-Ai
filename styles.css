@@ -675,99 +675,138 @@ textarea.admin-inline-field { min-height: 90px; resize: vertical; }
 
 .new-post-form.open { display: block; }
 
-/* ---------- Community ---------- */
+/* ---------- Simulateur ---------- */
 
-.community-layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
-}
-
-.community-tabs {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-
-.community-tab {
-  padding: 8px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--line);
+.balance-card {
   background: var(--paper-raised);
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--ink-soft);
-  cursor: pointer;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--forest);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.community-tab.active { background: var(--forest); color: #fff; border-color: var(--forest); }
+.balance-card .balance-value {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--forest-dark);
+}
 
-.post-card {
+.instrument-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 16px 0 24px;
+}
+
+.instrument-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  margin-bottom: 12px;
-  background: var(--paper-raised);
-  text-decoration: none;
-  display: block;
-  color: var(--ink);
+  padding: 14px;
+  background: #fff;
+  cursor: pointer;
+  text-align: center;
 }
 
-.post-card:hover { border-color: var(--forest); }
+.instrument-card.selected { border-color: var(--forest); background: #E1EFE9; }
 
-.post-card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.instrument-card .instrument-symbol { font-weight: 700; font-size: 0.95rem; }
+.instrument-card .instrument-price { font-family: var(--font-display); font-size: 1.15rem; margin-top: 4px; }
 
-.post-meta {
-  font-size: 0.8rem;
-  color: var(--ink-soft);
+.trade-form-row {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 20px;
 }
 
-.post-meta .badge { background: var(--line); }
+.side-toggle { display: flex; gap: 8px; }
 
-.post-detail-header {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 18px;
-  margin-bottom: 18px;
+.side-btn {
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.post-body { white-space: pre-line; line-height: 1.65; margin: 14px 0; }
+.side-btn.buy.selected { background: var(--forest); color: #fff; border-color: var(--forest); }
+.side-btn.sell.selected { background: var(--danger); color: #fff; border-color: var(--danger); }
 
-.comment-card {
-  border-top: 1px solid var(--line);
-  padding: 14px 0;
+.position-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 10px;
+  background: var(--paper-raised);
 }
 
-.comment-meta {
-  font-size: 0.78rem;
-  color: var(--ink-soft);
+.position-card .pnl-positive { color: var(--forest-dark); font-weight: 700; }
+.position-card .pnl-negative { color: var(--danger); font-weight: 700; }
+
+.feedback-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 0.88rem;
+}
+
+.feedback-block ul { margin: 4px 0 10px; padding-left: 18px; }
+.feedback-block .feedback-good { color: var(--forest-dark); }
+.feedback-block .feedback-bad { color: var(--danger); }
+.feedback-block .feedback-lesson { color: var(--ink-soft); }
+
+/* ---------- Journal de trading ---------- */
+
+.insights-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  margin-bottom: 28px;
+}
+
+.insights-card ul { margin: 8px 0 0; padding-left: 18px; }
+.insights-card li { margin-bottom: 6px; }
+
+.journal-entry-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  background: var(--paper-raised);
+}
+
+.journal-entry-card .entry-header {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.journal-entry-card .entry-field {
+  font-size: 0.88rem;
   margin-bottom: 4px;
 }
 
-.comment-body { white-space: pre-line; }
+.journal-entry-card .entry-field strong { color: var(--ink-soft); font-weight: 600; }
 
-.hidden-flag {
+.entry-flag {
   display: inline-block;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--danger);
-  background: #F6E4DF;
   padding: 2px 8px;
   border-radius: 20px;
-  margin-left: 6px;
+  background: #F6E4DF;
+  color: var(--danger);
+  margin: 2px 4px 2px 0;
 }
-
-.new-post-form {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 20px;
-  margin-bottom: 24px;
-  background: var(--paper-raised);
-  display: none;
-}
-
-.new-post-form.open { display: block; }
