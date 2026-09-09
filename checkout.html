@@ -33,155 +33,200 @@ if (typeof requireAuth !== "function") {
   throw new Error("supabase-client.js non chargé — arrêt du script checkout.");
 }
 
-// Remplace par le Client ID PayPal réel (publique, sans danger à exposer)
-// une fois le compte marchand configuré. Tant que ce placeholder est en
-// place, le bouton PayPal affiche un message au lieu de charger le SDK.
-const PAYPAL_CLIENT_ID = "REMPLACER_PAR_VOTRE_PAYPAL_CLIENT_ID";
+// ⚠️ Remplace ces placeholders par tes vraies informations de réception.
+// Ces informations sont affichées à tout utilisateur connecté qui souhaite
+// débloquer un niveau — n'y mets rien de plus qu'un numéro et un nom, jamais
+// un mot de passe ou un code secret.
+const PAYMENT_METHODS = {
+  moncash: {
+    label: "MonCash",
+    instructions: "Envoie le montant via MonCash au numéro ci-dessous, puis note le numéro de référence reçu par SMS.",
+    number: "+509 34981561",
+    holderName: "Célestin Woldjy Junior",
+  },
+  natcash: {
+    label: "NatCash",
+    instructions: "Envoie le montant via NatCash au numéro ci-dessous, puis note le numéro de référence reçu par SMS.",
+    number: "+509 42824391",
+    holderName: "NOM PRÉNOM À REMPLACER",
+  },
+  bank_transfer: {
+    label: "Virement bancaire",
+    instructions: "Effectue un virement vers le compte ci-dessous, puis note la référence ou le numéro de transaction.",
+    bankName: "NOM DE LA BANQUE À REMPLACER",
+    accountName: "NOM DU TITULAIRE À REMPLACER",
+    accountNumber: "NUMÉRO DE COMPTE À REMPLACER",
+  },
+};
 
 function getParams() {
   return new URLSearchParams(window.location.search);
 }
 
+let currentUser = null;
+let currentLevel = null;
+let selectedMethod = null;
+
 (async () => {
-  const user = await requireAuth();
-  if (!user) return;
+  currentUser = await requireAuth();
+  if (!currentUser) return;
 
   const shell = document.getElementById("checkout-shell");
-  const params = getParams();
-  const levelId = params.get("level");
-  const status = params.get("status"); // "success" | "cancelled" (retour Stripe)
+  const levelId = getParams().get("level");
 
   if (!levelId) {
     shell.innerHTML = `<p>Aucun niveau spécifié. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
     return;
   }
 
-  const level = await getLevelById(levelId);
-  if (!level) {
+  currentLevel = await getLevelById(levelId);
+  if (!currentLevel) {
     shell.innerHTML = `<p>Ce niveau est introuvable. <a href="dashboard.html">Retourner au tableau de bord</a>.</p>`;
     return;
   }
 
-  const access = await getUserLevelAccess(user.id);
+  const access = await getUserLevelAccess(currentUser.id);
   if (access.includes(levelId)) {
     shell.innerHTML = `
       <div class="checkout-status">
         <h2>✅ Niveau déjà débloqué</h2>
-        <p>Tu as déjà accès au niveau ${level.name}.</p>
+        <p>Tu as déjà accès au niveau ${currentLevel.name}.</p>
         <a href="dashboard.html" class="btn btn-primary">Retour au tableau de bord</a>
       </div>`;
     return;
   }
 
-  // Retour depuis Stripe Checkout : la confirmation réelle vient du webhook
-  // (asynchrone), donc on affiche un état d'attente et on vérifie
-  // périodiquement si l'accès a été accordé, plutôt que de faire confiance
-  // au simple retour d'URL.
-  if (status === "success") {
-    shell.innerHTML = `
-      <div class="checkout-status">
-        <h2>Paiement reçu — confirmation en cours</h2>
-        <p>Ton paiement est en cours de validation. L'accès au niveau ${level.name} se débloque automatiquement dès que la confirmation est reçue — cela prend généralement quelques secondes.</p>
-        <p id="poll-status" style="color:var(--ink-soft); font-size:0.9rem;">Vérification en cours...</p>
-        <a href="dashboard.html" class="btn btn-outline" style="margin-top:10px;">Retourner au tableau de bord</a>
-      </div>`;
-    const granted = await pollForLevelAccess(user.id, levelId, 20, 3000);
-    const pollMsg = document.getElementById("poll-status");
-    if (granted) {
-      window.location.href = "dashboard.html";
-    } else if (pollMsg) {
-      pollMsg.textContent = "La confirmation prend plus de temps que prévu. Vérifie ton tableau de bord dans quelques minutes, ou contacte le support si l'accès n'apparaît pas.";
-    }
-    return;
-  }
-
-  if (status === "cancelled") {
-    // Continue vers l'affichage normal du checkout, avec un message de rappel.
-  }
-
-  renderCheckout(shell, user, level, status === "cancelled");
+  renderCheckout(shell);
 })();
 
-function renderCheckout(shell, user, level, wasCancelled) {
+function renderCheckout(shell) {
   shell.innerHTML = `
     <div class="checkout-card">
       <div class="breadcrumb"><a href="dashboard.html">Tableau de bord</a> › Débloquer un niveau</div>
-      <h2>Niveau ${level.name}</h2>
-      <p>${level.description || ""}</p>
-      <div class="checkout-price">${Number(level.price_usd).toFixed(2)} $</div>
-      ${wasCancelled ? `<div class="form-msg error" style="display:block;">Le paiement a été annulé. Tu peux réessayer ci-dessous.</div>` : ""}
-      <div id="checkout-msg" class="form-msg"></div>
-      <div class="checkout-methods">
-        <button class="checkout-method-btn stripe" id="stripe-btn">Payer par carte (Stripe)</button>
-        <div id="paypal-button-container"></div>
+      <h2>Niveau ${currentLevel.name}</h2>
+      <p>${currentLevel.description || ""}</p>
+      <div class="checkout-price">${Number(currentLevel.price_usd).toFixed(2)} $</div>
+
+      <div class="checkout-methods" id="method-buttons">
+        <button class="checkout-method-btn" data-method="moncash">Payer par MonCash</button>
+        <button class="checkout-method-btn" data-method="natcash">Payer par NatCash</button>
+        <button class="checkout-method-btn" data-method="bank_transfer">Payer par virement bancaire</button>
       </div>
+
+      <div id="method-detail" style="margin-top:20px;"></div>
+
       <p style="margin-top:20px; font-size:0.82rem; color:var(--ink-soft);">
-        Paiement sécurisé. La confirmation finale et l'attribution de l'accès sont vérifiées côté serveur avant d'être accordées.
+        Après avoir envoyé le paiement, soumets la référence ci-dessous. Un administrateur
+        confirme la réception et débloque ton accès manuellement — généralement sous 24h.
       </p>
     </div>
   `;
 
-  function showMsg(text, type) {
-    const msg = document.getElementById("checkout-msg");
-    msg.textContent = text;
-    msg.className = "form-msg " + type;
-  }
-
-  document.getElementById("stripe-btn").addEventListener("click", async () => {
-    const btn = document.getElementById("stripe-btn");
-    btn.disabled = true;
-    btn.textContent = "Redirection...";
-    const { data, error } = await invokeEdgeFunction("create-checkout-session", { level_id: level.id });
-    if (error || !data?.url) {
-      showMsg("Le paiement par carte n'est pas encore configuré sur ce projet (fonction serveur \"create-checkout-session\" non déployée). Voir supabase/functions/README.md.", "error");
-      btn.disabled = false;
-      btn.textContent = "Payer par carte (Stripe)";
-      return;
-    }
-    window.location.href = data.url;
+  document.querySelectorAll(".checkout-method-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      selectedMethod = btn.getAttribute("data-method");
+      document.querySelectorAll(".checkout-method-btn").forEach(b => b.classList.toggle("selected", b === btn));
+      renderMethodDetail();
+    });
   });
-
-  setupPaypalButton(user, level, showMsg);
 }
 
-function setupPaypalButton(user, level, showMsg) {
-  const container = document.getElementById("paypal-button-container");
+function renderMethodDetail() {
+  const detail = document.getElementById("method-detail");
+  const method = PAYMENT_METHODS[selectedMethod];
 
-  if (!PAYPAL_CLIENT_ID || PAYPAL_CLIENT_ID.startsWith("REMPLACER_")) {
-    container.innerHTML = `<p style="font-size:0.85rem; color:var(--ink-soft); text-align:center;">Le paiement PayPal n'est pas encore configuré sur ce projet.</p>`;
+  let infoHtml = "";
+  if (selectedMethod === "bank_transfer") {
+    infoHtml = `
+      <p><strong>Banque :</strong> ${method.bankName}<br>
+      <strong>Titulaire :</strong> ${method.accountName}<br>
+      <strong>Numéro de compte :</strong> ${method.accountNumber}</p>
+    `;
+  } else {
+    infoHtml = `
+      <p><strong>Numéro ${method.label} :</strong> ${method.number}<br>
+      <strong>Titulaire :</strong> ${method.holderName}</p>
+    `;
+  }
+
+  detail.innerHTML = `
+    <div class="auth-card" style="max-width:none; padding:20px;">
+      <h3 style="margin-top:0;">${method.label}</h3>
+      <p>${method.instructions}</p>
+      ${infoHtml}
+
+      <div class="field">
+        <label for="payment-reference">Référence / numéro de transaction reçu</label>
+        <input type="text" id="payment-reference" class="admin-inline-field" placeholder="Ex : MP240915.1234.A56789">
+      </div>
+
+      <div class="field">
+        <label for="proof-file">Capture d'écran de la confirmation (optionnel)</label>
+        <input type="file" id="proof-file" accept="image/*">
+      </div>
+
+      <div id="checkout-msg" class="form-msg"></div>
+      <button class="btn btn-primary btn-block" id="submit-payment-btn">J'ai envoyé le paiement</button>
+    </div>
+  `;
+
+  document.getElementById("submit-payment-btn").addEventListener("click", handleSubmitPayment);
+}
+
+async function handleSubmitPayment() {
+  const msg = document.getElementById("checkout-msg");
+  const reference = document.getElementById("payment-reference").value.trim();
+  const proofFile = document.getElementById("proof-file").files[0];
+
+  if (!reference) {
+    msg.textContent = "Indique la référence ou le numéro de transaction reçu.";
+    msg.className = "form-msg error";
     return;
   }
 
-  const script = document.createElement("script");
-  script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(PAYPAL_CLIENT_ID)}&currency=USD`;
-  script.onload = () => {
-    if (!window.paypal) return;
-    window.paypal.Buttons({
-      createOrder: async () => {
-        const { data, error } = await invokeEdgeFunction("paypal-create-order", { level_id: level.id });
-        if (error || !data?.orderId) {
-          showMsg("Impossible de créer la commande PayPal pour le moment.", "error");
-          throw new Error("paypal-create-order failed");
-        }
-        return data.orderId;
-      },
-      onApprove: async (data) => {
-        const result = await invokeEdgeFunction("paypal-capture-order", { order_id: data.orderID });
-        if (result.error || !result.data?.success) {
-          showMsg("Le paiement PayPal n'a pas pu être confirmé.", "error");
-          return;
-        }
-        window.location.href = `checkout.html?level=${level.id}&status=success`;
-      },
-      onError: () => {
-        showMsg("Une erreur est survenue avec PayPal.", "error");
-      }
-    }).render("#paypal-button-container");
-  };
-  script.onerror = () => {
-    container.innerHTML = `<p style="font-size:0.85rem; color:var(--ink-soft); text-align:center;">Impossible de charger PayPal.</p>`;
-  };
-  document.body.appendChild(script);
+  const btn = document.getElementById("submit-payment-btn");
+  btn.disabled = true;
+  btn.textContent = "Envoi...";
+
+  let proofPath = null;
+  if (proofFile) {
+    proofPath = await uploadPaymentProof(currentUser.id, proofFile);
+    if (!proofPath) {
+      msg.textContent = "Erreur lors de l'envoi de la capture d'écran. Vérifie que le bucket \"payment-proofs\" est configuré (supabase/storage-payment-proofs-setup.sql), ou réessaie sans capture.";
+      msg.className = "form-msg error";
+      btn.disabled = false;
+      btn.textContent = "J'ai envoyé le paiement";
+      return;
+    }
+  }
+
+  const created = await createManualPayment(
+    currentUser.id,
+    currentLevel.id,
+    currentLevel.price_usd,
+    selectedMethod,
+    reference,
+    proofPath
+  );
+
+  btn.disabled = false;
+  btn.textContent = "J'ai envoyé le paiement";
+
+  if (!created) {
+    msg.textContent = "Erreur lors de l'enregistrement. Réessaie dans un instant.";
+    msg.className = "form-msg error";
+    return;
+  }
+
+  document.getElementById("checkout-shell").innerHTML = `
+    <div class="checkout-status">
+      <h2>Paiement soumis</h2>
+      <p>Ta référence a été transmise. Un administrateur va confirmer la réception du paiement
+      et débloquer ton accès au niveau ${currentLevel.name} manuellement — tu recevras l'accès
+      dès que ce sera fait.</p>
+      <a href="dashboard.html" class="btn btn-primary">Retour au tableau de bord</a>
+    </div>
+  `;
 }
 
 document.getElementById("logout-link").addEventListener("click", (e) => {
