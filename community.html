@@ -68,6 +68,17 @@ function timeAgo(iso) {
   categories = await getCommunityCategories();
 
   const shell = document.getElementById("community-shell");
+
+  if (categories.length === 0) {
+    shell.innerHTML = `
+      <div class="form-msg error" style="display:block;">
+        Aucune catégorie de communauté n'est configurée pour le moment. Demande à un
+        administrateur d'exécuter la section "community_categories" de
+        <code>supabase/schema.sql</code> (ou de réinsérer les 4 catégories par défaut).
+      </div>`;
+    return;
+  }
+
   shell.innerHTML = `
     <div class="admin-tabs" id="category-tabs">
       <button class="admin-tab active" data-cat="">Tous les sujets</button>
@@ -80,6 +91,7 @@ function timeAgo(iso) {
       <div class="field">
         <label for="post-category">Catégorie</label>
         <select class="admin-inline-field" id="post-category">
+          <option value="">— Choisir une catégorie —</option>
           ${categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}
         </select>
       </div>
@@ -117,6 +129,11 @@ function timeAgo(iso) {
     const content = document.getElementById("post-content").value.trim();
     const msg = document.getElementById("new-post-msg");
 
+    if (!categoryId) {
+      msg.textContent = "Choisis une catégorie.";
+      msg.className = "form-msg error";
+      return;
+    }
     if (!title || !content) {
       msg.textContent = "Le titre et le message sont obligatoires.";
       msg.className = "form-msg error";
