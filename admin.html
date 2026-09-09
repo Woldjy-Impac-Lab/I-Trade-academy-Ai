@@ -415,27 +415,46 @@ async function loadPayments() {
   panel.innerHTML = `
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th>Utilisateur</th><th>Niveau</th><th>Montant</th><th>Fournisseur</th><th>Statut</th><th>Date</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Utilisateur</th><th>Niveau</th><th>Montant</th><th>Fournisseur</th><th>Référence</th><th>Statut</th><th>Date</th><th>Actions</th></tr></thead>
         <tbody>
           ${payments.map(p => `
-            <tr data-payment-id="${p.id}" data-user-id="${p.user_id}" data-level-id="${p.level_id}">
+            <tr data-payment-id="${p.id}" data-user-id="${p.user_id}" data-level-id="${p.level_id}" data-proof-url="${p.proof_url || ""}">
               <td>${escapeHtml(p.profiles?.email || "—")}</td>
               <td>${escapeHtml(p.levels?.name || p.level_id)}</td>
               <td>${Number(p.amount_usd).toFixed(2)} $</td>
               <td>${escapeHtml(p.provider)}</td>
+              <td>${escapeHtml(p.provider_reference || "—")}</td>
               <td><span class="badge ${p.status === "completed" ? "done" : ""}">${p.status}</span></td>
               <td>${formatDate(p.created_at)}</td>
               <td>
-                ${p.status !== "completed"
-                  ? `<button class="btn btn-outline btn-mark-paid">Marquer complété + accès</button>`
-                  : "—"}
+                <div class="admin-actions">
+                  ${p.proof_url ? `<button class="btn btn-outline btn-view-proof">Voir la preuve</button>` : ""}
+                  ${p.status !== "completed"
+                    ? `<button class="btn btn-outline btn-mark-paid">Marquer complété + accès</button>`
+                    : ""}
+                </div>
               </td>
             </tr>
-          `).join("") || `<tr><td colspan="7">Aucun paiement pour le moment.</td></tr>`}
+          `).join("") || `<tr><td colspan="8">Aucun paiement pour le moment.</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
+
+  panel.querySelectorAll(".btn-view-proof").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const proofPath = row.getAttribute("data-proof-url");
+      btn.disabled = true;
+      const url = await getSignedPaymentProofUrl(proofPath, 300);
+      btn.disabled = false;
+      if (url) {
+        window.open(url, "_blank");
+      } else {
+        alert("Impossible de générer le lien vers la preuve.");
+      }
+    });
+  });
 
   panel.querySelectorAll(".btn-mark-paid").forEach(btn => {
     btn.addEventListener("click", async (e) => {
