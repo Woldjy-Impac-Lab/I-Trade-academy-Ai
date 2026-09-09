@@ -19,6 +19,13 @@ Plateforme d'éducation au trading pour débutants — HTML/CSS/JS vanilla + Sup
   navigation précédent/suivant, bouton "Marquer comme terminée".
 - **Quiz** (`quiz.html`) : 20 questions par cours lues dynamiquement, correction, score,
   génération automatique du certificat de niveau quand les conditions sont réunies.
+  Exécute `supabase/quiz-questions.sql` (après `schema.sql` et `seed-content.sql`) pour
+  insérer les 160 questions (20 par cours × 8 cours, 4 choix chacune).
+  ⚠️ Limite de sécurité connue : les bonnes réponses (`correct_choice_id`) sont lisibles par
+  n'importe quel client authentifié via la policy RLS `quiz_questions_select_all`, et la
+  correction est calculée côté client. Un utilisateur techniquement averti pourrait donc
+  tricher en lisant la réponse dans les requêtes réseau. Pour un usage sérieux, il faudrait
+  déplacer la correction vers une Edge Function côté serveur.
 - **Administration** (`admin.html`) : réservée aux profils `role = 'admin'` (vérifié par la
   policy RLS `is_admin()` et par un contrôle côté client). Onglets : vue d'ensemble
   (statistiques), utilisateurs (réinitialiser la progression, changer le rôle), contenu
@@ -26,6 +33,54 @@ Plateforme d'éducation au trading pour débutants — HTML/CSS/JS vanilla + Sup
   manuellement un paiement et accorder l'accès au niveau), certificats (voir/révoquer),
   et journal d'audit (`admin_audit_log`, alimenté automatiquement par chaque action admin).
   Un lien "⚙ Administration" apparaît dans le tableau de bord étudiant pour les comptes admin.
+- **Checkout** (`checkout.html`) : page de paiement manuel pour débloquer un niveau — MonCash,
+  NatCash ou virement bancaire. L'utilisateur voit les coordonnées de réception (⚠️ à
+  remplacer par les vraies dans les constantes `PAYMENT_METHODS` en haut du fichier), envoie
+  le paiement lui-même, puis soumet la référence de transaction et, en option, une capture
+  d'écran (déposée dans le bucket privé `payment-proofs`, voir
+  `supabase/storage-payment-proofs-setup.sql`). Le paiement est créé en base avec le statut
+  `pending`. Un administrateur confirme ensuite manuellement dans `admin.html` (onglet
+  Paiements, bouton "Marquer complété + accès" — et "Voir la preuve" si une capture a été
+  jointe), ce qui accorde l'accès au niveau. Le prix vient toujours de la table `levels`,
+  jamais du client. Des Edge Functions Stripe/PayPal existent aussi dans `supabase/functions/`
+  (voir leur README) si un processeur international devient utilisable plus tard, mais elles
+  ne sont pas utilisées par ce flux manuel.
+- **Communauté** (`community.html`, `community-post.html`) : sujets filtrables par catégorie
+  (stratégies, questions techniques, journal de trading, général), création de sujet et de
+  réponses, modération manuelle (masquer/réafficher/supprimer) accessible à l'auteur ou à un
+  admin — chaque action de modération admin est aussi enregistrée dans `admin_audit_log`.
+  ⚠️ Si ton projet Supabase a été initialisé **avant** cette mise à jour, exécute
+  `supabase/patch-community-comments-delete.sql` une fois (idempotent) : `schema.sql`
+  définissait une policy de suppression sur les sujets mais pas sur les commentaires ; c'est
+  corrigé dans `schema.sql` pour les nouvelles installations. La modération automatique de
+  contenu (appel à une API de modération avant publication) n'est pas implémentée.
+- **Simulateur** (`simulator.html`) : se débloque quand le certificat du niveau Intermédiaire
+  existe. Solde virtuel de départ (100 000 $, réinitialisable), 4 instruments crypto
+  (BTC/ETH/SOL/DOGE) avec prix réels récupérés directement depuis le navigateur de
+  l'utilisateur via l'API publique CoinGecko (aucune clé requise). Positions longues/courtes,
+  P&L non réalisé en direct, et à la clôture de chaque position : une analyse pédagogique
+  (bien fait / à améliorer / leçon à retenir) générée par des **règles simples côté client**
+  (taille de position vs solde, ampleur du gain/perte, durée très courte de la position) —
+  ce n'est pas encore Atlas (IA) : à terme, `generateTradeFeedback()` dans
+  `js/supabase-client.js` pourrait être remplacée par un appel à une Edge Function faisant
+  intervenir un vrai modèle de langage, sans changer le reste de la page.
+- **Journal de trading** (`journal.html`) : chaque entrée peut être liée à une position
+  clôturée du simulateur (préremplissage instrument/action/montant) ou saisie librement, avec
+  objectif, signal identifié et risque accepté. `analyzeJournalPatterns()` (règles, pas d'IA)
+  détecte des habitudes récurrentes — champs souvent laissés vides, concentration excessive
+  sur un seul instrument, taux de perte plus élevé quand le risque n'était pas noté à
+  l'avance — affichées en synthèse et, par entrée, dans `system_flags`.
+- **Certificats** (`certificates.html`) : liste les certificats obtenus (nom, niveau, date,
+  identifiant unique) avec un rendu imprimable/exportable en PDF via l'impression du
+  navigateur (`window.print()` + CSS dédiée), sans dépendance externe.
+- **Atlas — coach IA** (`atlas.html`) : conversations multiples, historique persistant
+  (`coach_conversations` / `coach_messages`), upload d'image de graphique (bucket Storage
+  `chart-images`, voir `supabase/storage-setup.sql`). Passe par l'Edge Function `atlas-chat`
+  (voir `supabase/functions/README.md`) qui appelle une API IA multimodale (OpenAI par
+  défaut) avec un system prompt imposant la règle centrale : **jamais de recommandation
+  d'achat/vente directe**, toujours une explication pédagogique de la méthode. Sans cette
+  fonction déployée (clé API IA requise), le chat affiche un message clair au lieu
+  d'échouer silencieusement.
 
 ## Mise en route
 
@@ -40,46 +95,24 @@ Plateforme d'éducation au trading pour débutants — HTML/CSS/JS vanilla + Sup
    - `supabase/lesson-content-full.sql` : remplace le résumé court de chaque leçon par un
      paragraphe pédagogique complet (les 120 leçons ont un vrai contenu rédigé).
    Les deux scripts sont idempotents.
-4. **Servir les fichiers** : ce sont des pages statiques — n'importe quel serveur statique
+4. **Stockage des graphiques (Atlas)** : exécute `supabase/storage-setup.sql` pour créer le
+   bucket `chart-images` utilisé quand un utilisateur joint un graphique dans le chat Atlas.
+5. **Stockage des preuves de paiement** : exécute `supabase/storage-payment-proofs-setup.sql`
+   pour créer le bucket privé `payment-proofs` (captures d'écran MonCash/NatCash/virement).
+   Remplace aussi les placeholders (numéros, nom de banque) dans les constantes
+   `PAYMENT_METHODS` en haut de `checkout.html`.
+6. **Servir les fichiers** : ce sont des pages statiques — n'importe quel serveur statique
    fonctionne (`npx serve .`, GitHub Pages, Vercel, Netlify...). Aucune étape de build.
-5. Ouvre `index.html`, crée un compte, tu arrives sur `dashboard.html`.
+7. Ouvre `index.html`, crée un compte, tu arrives sur `dashboard.html`.
 
 ## Ce qu'il reste à construire
 
-Le schéma de données est déjà prêt pour tout ce qui suit — il s'agit d'ajouter les pages/
-fonctions correspondantes :
+Le schéma de données est déjà prêt si tu veux ajouter, au-delà du périmètre initial :
 
-- **Paiements** : intégrer Stripe ou PayPal. Le flux prévu : la page `checkout.html`
-  (référencée par le dashboard mais pas encore créée) déclenche le paiement, puis un
-  **webhook côté serveur** (Supabase Edge Function) confirme la transaction et insère
-  la ligne dans `payments` + `level_access`. Ne jamais valider un paiement uniquement
-  côté client — la clé publique Supabase actuelle ne permet pas d'écrire dans ces tables
-  sans passer par une fonction serveur qui vérifie la signature du paiement.
-- **Coach IA Atlas** : Edge Function Supabase qui reçoit la question (+ image de graphique
-  optionnelle) et appelle une API IA (OpenAI ou équivalent) avec un system prompt qui lui
-  interdit d'émettre des recommandations d'achat/vente directes. Stocke l'échange dans
-  `coach_conversations` / `coach_messages`.
-- **Simulateur de trading** : page qui lit/écrit dans `simulator_accounts` et
-  `simulator_trades`. Le champ `ai_feedback_*` de `simulator_trades` est prévu pour recevoir
-  l'explication post-transaction générée par Atlas.
-- **Quiz** (`quiz.html`, fait ✅) : lit dynamiquement `quiz_questions` par cours, calcule le
-  score, enregistre `quiz_attempts` + `quiz_answers`, et génère automatiquement le certificat
-  de niveau (`certificates`) dès que les deux cours du niveau sont réussis (≥ 75%) ET que
-  toutes les leçons du niveau sont terminées. Exécute `supabase/quiz-questions.sql` (après
-  `schema.sql` et `seed-content.sql`) pour insérer les 160 questions (20 par cours × 8 cours,
-  4 choix chacune) — les quiz sont maintenant utilisables de bout en bout.
-  ⚠️ Limite de sécurité connue : les bonnes réponses (`correct_choice_id`) sont lisibles par
-  n'importe quel client authentifié via la policy RLS `quiz_questions_select_all`, et la
-  correction est calculée côté client dans `quiz.html`. Un utilisateur techniquement averti
-  pourrait donc tricher en lisant la réponse directement dans les requêtes réseau. Pour un
-  usage sérieux, il faudrait déplacer la correction vers une Edge Function côté serveur qui
-  ne renvoie jamais `correct_choice_id` au client avant la soumission.
-- **Journal de trading** : formulaire lié à `trading_journal_entries` ; la détection des
-  erreurs répétées (`system_flags`) peut être une simple requête SQL (regrouper par type
-  d'erreur) ou passer par Atlas.
-- **Communauté** : liste/formulaire sur `community_posts` / `community_comments`, filtrés
-  par `community_categories`. La modération manuelle bascule `is_hidden` ; une modération
-  automatique peut appeler une API de modération de contenu avant insertion.
+- Un vrai flux de récupération de mot de passe testé de bout en bout (la fonction existe
+  côté `login.html`, mais dépend de la configuration email de ton projet Supabase).
+- Une modération automatique de contenu pour la Communauté (appel à une API de modération
+  avant publication, en complément de la modération manuelle déjà en place).
 
 ## Sécurité — points à ne pas oublier
 
