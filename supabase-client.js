@@ -457,7 +457,7 @@ async function setUserLevel(userId, levelId) {
 async function getAllPayments() {
   const { data, error } = await supabase
     .from("payments")
-    .select("id, amount_usd, provider, provider_reference, status, created_at, user_id, level_id, profiles ( email ), levels ( name )")
+    .select("id, amount_usd, provider, provider_reference, proof_url, status, created_at, user_id, level_id, profiles ( email ), levels ( name )")
     .order("created_at", { ascending: false });
   if (error) {
     console.error("Erreur lors du chargement des paiements :", error);
@@ -484,6 +484,58 @@ async function markPaymentCompletedAndGrantAccess(paymentId, userId, levelId) {
     return false;
   }
   return true;
+}
+
+// Dépose un justificatif de paiement (capture d'écran) dans le bucket privé
+// "payment-proofs" (dossier propre à l'utilisateur) et retourne son chemin
+// de stockage (pas une URL publique, le bucket est privé).
+async function uploadPaymentProof(userId, file) {
+  const path = `${userId}/${Date.now()}-${file.name}`;
+  const { error } = await supabase.storage
+    .from("payment-proofs")
+    .upload(path, file, { upsert: false });
+  if (error) {
+    console.error("Erreur lors de l'envoi du justificatif :", error);
+    return null;
+  }
+  return path;
+}
+
+// Génère une URL signée temporaire pour consulter un justificatif de paiement
+// privé (utilisé par admin.html).
+async function getSignedPaymentProofUrl(path, expiresInSeconds) {
+  const { data, error } = await supabase.storage
+    .from("payment-proofs")
+    .createSignedUrl(path, expiresInSeconds || 300);
+  if (error) {
+    console.error("Erreur lors de la génération de l'URL signée :", error);
+    return null;
+  }
+  return data?.signedUrl || null;
+}
+
+// Crée un paiement "pending" pour un virement manuel (MonCash, NatCash,
+// virement bancaire...). Un admin le valide ensuite dans admin.html, ce qui
+// accorde l'accès au niveau via markPaymentCompletedAndGrantAccess.
+async function createManualPayment(userId, levelId, amountUsd, provider, reference, proofPath) {
+  const { data, error } = await supabase
+    .from("payments")
+    .insert({
+      user_id: userId,
+      level_id: levelId,
+      amount_usd: amountUsd,
+      provider,
+      provider_reference: reference || null,
+      proof_url: proofPath || null,
+      status: "pending",
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de l'enregistrement du paiement :", error);
+    return null;
+  }
+  return data;
 }
 
 // ---- Certificats ----
