@@ -1,0 +1,8 @@
+{
+  "appId": "com.woldjy.itradeacademyai",
+  "appName": "I Trade Academy AI",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https"
+  }
+}
