@@ -1,0 +1,48 @@
+name: Build I Trade Academy AI Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare web files
+        run: |
+          mkdir -p www
+          cp *.html www/
+          cp *.css www/
+          cp *.js www/
+
+      - name: Install Capacitor CLI
+        run: npm install @capacitor/cli@8 @capacitor/core@8 @capacitor/android@8
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build Android App Bundle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: i-trade-academy-ai-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
