@@ -1,0 +1,16 @@
+{
+  "name": "i-trade-academy-ai",
+  "version": "1.0.0",
+  "description": "I Trade Academy AI - Plateforme d'apprentissage du trading",
+  "private": true,
+  "scripts": {
+    "build": "echo Build handled by Capacitor"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}
