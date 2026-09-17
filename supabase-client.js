@@ -3,7 +3,7 @@
 // ============================================================================
 // Chargé via CDN dans chaque page :
 // <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-// <script src="js/supabase-client.js"></script>
+// <script src="supabase-client.js"></script>
 
 // "var" (et non "const") volontairement : si ce script est chargé deux fois
 // sur la même page (double <script src>, cache, etc.), "const" provoquerait
