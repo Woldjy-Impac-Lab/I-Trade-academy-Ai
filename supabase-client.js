@@ -10,7 +10,6 @@
 // un "Identifier has already been declared" qui casse tout le fichier.
 var SUPABASE_URL = "https://lvghtaqhzssasmldmkqq.supabase.co";
 var SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1woMQp6pTiZIG3lzMVdV7g_mfFdN0Rp";
-
 // Garde en plus : ne recrée pas le client s'il existe déjà.
 var supabase = (window.__itradeSupabaseClient =
   window.__itradeSupabaseClient ||
@@ -182,7 +181,7 @@ async function getCourseQuizContext(courseId) {
   const { data, error } = await supabase
     .from("courses")
     .select(`
-      id, title, order_index, level_id,
+      id, title, order_index, level_id, review_guide,
       levels ( id, name, order_index, price_usd )
     `)
     .eq("id", courseId)
@@ -536,6 +535,53 @@ async function createManualPayment(userId, levelId, amountUsd, provider, referen
     return null;
   }
   return data;
+}
+
+// ---- Messages de contact (formulaire public contact.html) ----
+
+// Accessible sans connexion (visiteur) : userId peut être null.
+async function createContactMessage(name, email, subject, message, userId) {
+  const { data, error } = await supabase
+    .from("contact_messages")
+    .insert({
+      name,
+      email,
+      subject: subject || null,
+      message,
+      user_id: userId || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error("Erreur lors de l'envoi du message de contact :", error);
+    return null;
+  }
+  return data;
+}
+
+async function getContactMessages() {
+  const { data, error } = await supabase
+    .from("contact_messages")
+    .select("id, name, email, subject, message, is_read, created_at")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("Erreur lors du chargement des messages de contact :", error);
+    return [];
+  }
+  return data;
+}
+
+async function markContactMessageRead(id, isRead) {
+  const { error } = await supabase
+    .from("contact_messages")
+    .update({ is_read: isRead })
+    .eq("id", id);
+  return !error;
+}
+
+async function deleteContactMessage(id) {
+  const { error } = await supabase.from("contact_messages").delete().eq("id", id);
+  return !error;
 }
 
 // ---- Certificats ----
