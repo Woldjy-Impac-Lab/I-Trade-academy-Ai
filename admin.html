@@ -78,6 +78,7 @@ function formatDate(iso) {
       <button class="admin-tab" data-tab="content">Contenu académique</button>
       <button class="admin-tab" data-tab="payments">Paiements</button>
       <button class="admin-tab" data-tab="certificates">Certificats</button>
+      <button class="admin-tab" data-tab="messages">Messages</button>
       <button class="admin-tab" data-tab="audit">Journal d'audit</button>
     </div>
     <div class="admin-panel active" id="panel-overview"><p>Chargement...</p></div>
@@ -85,6 +86,7 @@ function formatDate(iso) {
     <div class="admin-panel" id="panel-content"><p>Chargement...</p></div>
     <div class="admin-panel" id="panel-payments"><p>Chargement...</p></div>
     <div class="admin-panel" id="panel-certificates"><p>Chargement...</p></div>
+    <div class="admin-panel" id="panel-messages"><p>Chargement...</p></div>
     <div class="admin-panel" id="panel-audit"><p>Chargement...</p></div>
   `;
 
@@ -106,6 +108,7 @@ function switchTab(tabName) {
     if (tabName === "content") loadContent();
     if (tabName === "payments") loadPayments();
     if (tabName === "certificates") loadCertificates();
+    if (tabName === "messages") loadMessages();
     if (tabName === "audit") loadAudit();
   }
 }
@@ -515,6 +518,68 @@ async function loadCertificates() {
       } else {
         alert("Erreur lors de la révocation.");
       }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Messages de contact
+// ---------------------------------------------------------------------------
+async function loadMessages() {
+  const panel = document.getElementById("panel-messages");
+  const messages = await getContactMessages();
+
+  panel.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Statut</th><th>Nom</th><th>Email</th><th>Sujet</th><th>Message</th><th>Date</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${messages.map(m => `
+            <tr data-msg-id="${m.id}">
+              <td><span class="badge ${m.is_read ? "done" : ""}">${m.is_read ? "Lu" : "Non lu"}</span></td>
+              <td>${escapeHtml(m.name)}</td>
+              <td>${escapeHtml(m.email)}</td>
+              <td>${escapeHtml(m.subject || "—")}</td>
+              <td style="white-space:normal; max-width:280px;">${escapeHtml(m.message)}</td>
+              <td>${formatDate(m.created_at)}</td>
+              <td>
+                <div class="admin-actions">
+                  <button class="btn btn-outline btn-toggle-read" data-read="${m.is_read}">${m.is_read ? "Marquer non lu" : "Marquer lu"}</button>
+                  <button class="btn btn-outline btn-delete-msg">Supprimer</button>
+                </div>
+              </td>
+            </tr>
+          `).join("") || `<tr><td colspan="7">Aucun message pour le moment.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  panel.querySelectorAll(".btn-toggle-read").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const msgId = row.getAttribute("data-msg-id");
+      const currentlyRead = btn.getAttribute("data-read") === "true";
+      btn.disabled = true;
+      const ok = await markContactMessageRead(msgId, !currentlyRead);
+      if (ok) {
+        loadedTabs.messages = false;
+        loadMessages();
+      } else {
+        alert("Erreur lors de la mise à jour.");
+        btn.disabled = false;
+      }
+    });
+  });
+
+  panel.querySelectorAll(".btn-delete-msg").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      const msgId = row.getAttribute("data-msg-id");
+      if (!confirm("Supprimer ce message définitivement ?")) return;
+      const ok = await deleteContactMessage(msgId);
+      if (ok) row.remove();
+      else alert("Erreur lors de la suppression.");
     });
   });
 }
