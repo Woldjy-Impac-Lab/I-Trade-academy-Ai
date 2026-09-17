@@ -81,6 +81,13 @@ Plateforme d'éducation au trading pour débutants — HTML/CSS/JS vanilla + Sup
   d'achat/vente directe**, toujours une explication pédagogique de la méthode. Sans cette
   fonction déployée (clé API IA requise), le chat affiche un message clair au lieu
   d'échouer silencieusement.
+- **À propos** (`apropos.html`) et **Contact** (`contact.html`) : deux pages publiques,
+  accessibles sans connexion. `contact.html` enregistre les messages dans
+  `contact_messages` (n'importe quel visiteur peut en envoyer un, même sans compte ; si la
+  personne est connectée, son email/nom se préremplissent et son `user_id` est associé au
+  message). Consultables, marquables comme lus et supprimables dans `admin.html`, nouvel
+  onglet **Messages**. Si ton projet Supabase existait avant cette mise à jour, exécute
+  `supabase/patch-contact-messages.sql` une fois (idempotent).
 
 ## Mise en route
 
