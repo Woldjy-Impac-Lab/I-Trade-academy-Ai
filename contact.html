@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contact — I Trade Academy AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="index.html" class="logo">I Trade Academy <strong>AI</strong></a>
+    <ul class="nav-links">
+      <li><a href="apropos.html">À propos</a></li>
+      <li><a href="dashboard.html">Mon compte</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="auth-shell" style="align-items:flex-start; padding-top:48px;">
+  <div class="auth-card" style="max-width:480px;">
+    <h2>Nous contacter</h2>
+    <p style="color:var(--ink-soft); font-size:0.92rem;">
+      Une question sur un cours, un problème de paiement, un bug sur la plateforme ? Écris-nous,
+      on te répond par email.
+    </p>
+    <div id="form-msg" class="form-msg"></div>
+    <form id="contact-form">
+      <div class="field">
+        <label for="name">Nom</label>
+        <input type="text" id="name" required>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" required>
+      </div>
+      <div class="field">
+        <label for="subject">Sujet (optionnel)</label>
+        <input type="text" id="subject">
+      </div>
+      <div class="field">
+        <label for="message">Message</label>
+        <textarea id="message" class="admin-inline-field" style="min-height:120px;" required></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Envoyer</button>
+    </form>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    © 2026 I Trade Academy AI. <a href="index.html">Accueil</a> · <a href="apropos.html">À propos</a>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+if (typeof getCurrentUser !== "function") {
+  document.getElementById("form-msg").textContent =
+    "Erreur de chargement : le fichier supabase-client.js n'a pas pu être chargé.";
+  document.getElementById("form-msg").className = "form-msg error";
+} else {
+  // Préremplit l'email si la personne est déjà connectée (facultatif, sans bloquer le formulaire sinon).
+  (async () => {
+    const user = await getCurrentUser();
+    if (user) {
+      document.getElementById("email").value = user.email;
+      const profile = await getCurrentProfile();
+      if (profile?.full_name) document.getElementById("name").value = profile.full_name;
+    }
+  })();
+
+  document.getElementById("contact-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("form-msg");
+    const name = document.getElementById("name").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const subject = document.getElementById("subject").value.trim();
+    const message = document.getElementById("message").value.trim();
+
+    const submitBtn = e.target.querySelector("button[type=submit]");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Envoi...";
+
+    const user = await getCurrentUser();
+    const created = await createContactMessage(name, email, subject, message, user?.id || null);
+
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Envoyer";
+
+    if (created) {
+      msg.textContent = "Message envoyé. On te répond par email dès que possible.";
+      msg.className = "form-msg success";
+      e.target.reset();
+    } else {
+      msg.textContent = "Une erreur est survenue lors de l'envoi. Réessaie dans un instant.";
+      msg.className = "form-msg error";
+    }
+  });
+}
+</script>
+
+</body>
+</html>
